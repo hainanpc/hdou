@@ -1,5 +1,5 @@
  // functions/api.js
-const HOST = "https://ahgehbki.cc";
+const HOST = "https://eyeonneb.cc";
 const API = HOST + "/api";
 const PLATFORM_KEY = "7961beb44246e3012ce228d6b5ced05a";
 const VERSION = "2.0.0";
