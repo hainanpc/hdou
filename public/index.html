@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>黄豆短剧 CF 源</title>
+  <style>
+    body { font-family: system-ui; max-width: 720px; margin: 40px auto; padding: 0 20px; }
+    code { background: #f4f4f4; padding: 2px 6px; border-radius: 4px; }
+    pre { background: #f8f8f8; padding: 16px; overflow: auto; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <h1>黄豆短剧 · Cloudflare 源</h1>
+  <p>个人学习使用，仅供自己观看。</p>
+  <h3>OK影视 配置地址</h3>
+  <pre id="cfg"></pre>
+  <script>
+    document.getElementById("cfg").textContent = location.origin + "/config.json";
+  </script>
+</body>
+</html>
