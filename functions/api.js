@@ -1,5 +1,5 @@
-// functions/api.js
-const HOST = "https://xqjzvcvt.top";
+ // functions/api.js
+const HOST = "https://ahgehbki.cc";
 const API = HOST + "/api";
 const PLATFORM_KEY = "7961beb44246e3012ce228d6b5ced05a";
 const VERSION = "2.0.0";
@@ -117,7 +117,10 @@ async function callApi(path, data = {}, sessionId) {
     body
   });
 
-  if (!res.ok) throw new Error(`API ${path} ${res.status}`);
+if (!res.ok) {
+  const text = await res.text().catch(() => "");
+  throw new Error(`API ${path} ${res.status} body=${text.slice(0, 300)}`);
+}
 
   const blob = new Uint8Array(await res.arrayBuffer());
   if (blob.length < 32 || (blob.length - 16) % 16 !== 0) {
