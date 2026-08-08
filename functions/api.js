@@ -445,11 +445,15 @@ item=item||{};
 
 
 let vid=
-String(
-item.id||
-item.drama_id||
+sid(
+item.id ||
+item.drama_id ||
 ""
 );
+
+
+if(!vid)
+return null;
 
 
 return {
@@ -459,7 +463,6 @@ vod_id:vid,
 vod_name:
 item.name||
 item.title||
-item.t||
 vid,
 
 
@@ -477,19 +480,14 @@ item.remark||
 
 
 vod_content:
-item.name||
-"",
+item.name||"",
 
 
-vod_actor:"",
+vod_play_from:"黄豆短剧",
 
-vod_director:"",
+vod_play_url:
+`第1集$${vid}|1`
 
-vod_year:"",
-
-vod_area:"",
-
-type_name:"黄豆短剧"
 
 };
 
@@ -865,16 +863,33 @@ async function categoryContent(
 
 
 
-	let data =
-		await callApi(
-			"/drama/list",
-			req
-		);
+let data =
+await callApi(
+"/drama/list",
+req
+);
 
 
+// 调试
+console.log(
+"category raw:",
+JSON.stringify(data)
+);
 
-	items =
-		listData(data);
+
+items =
+listData(data);
+
+
+// 过滤空数据
+items =
+items.filter(
+x =>
+(x.id ||
+ x.drama_id ||
+ x.name ||
+ x.title)
+);
 
 
 
@@ -888,7 +903,10 @@ limit:18,
 
 total:99999,
 
-list:items.map(vod),
+list:
+items
+.map(vod)
+.filter(Boolean),
 
 class_name:"黄豆短剧",
 
