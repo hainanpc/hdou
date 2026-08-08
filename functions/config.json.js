@@ -6,7 +6,7 @@ export async function onRequest(context) {
       {
         key: "huangdou",
         name: "黄豆短剧",
-        type: 3,
+        type: 4,
         api: origin+'/api',
         searchable: 1,
         quickSearch: 1,
