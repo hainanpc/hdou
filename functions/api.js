@@ -404,37 +404,33 @@ async function callApi(
 // ================= 数据解析 =================
 
 
-function listData(data) {
+function listData(data){
 
-	if (Array.isArray(data))
-		return data;
-
-
-	if (!data || typeof data != "object")
-		return [];
+ if(Array.isArray(data))
+ return data;
 
 
-	if (Array.isArray(data.list))
-		return data.list;
+ if(!data || typeof data!="object")
+ return [];
 
 
-	if (Array.isArray(data.items))
-		return data.items;
+ if(Array.isArray(data.list))
+ return data.list;
 
 
-	if (Array.isArray(data.tabs))
-		return data.tabs;
+ if(Array.isArray(data.items))
+ return data.items;
 
 
-	if (Array.isArray(data.data))
-		return data.data;
+ if(Array.isArray(data.data))
+ return data.data;
 
 
-	if (data.data)
-		return listData(data.data);
+ if(data.data && typeof data.data=="object")
+ return listData(data.data);
 
 
-	return [];
+ return [];
 
 }
 
@@ -443,42 +439,50 @@ function listData(data) {
 // ================= vod =================
 
 
-function vod(x) {
+function vod(item){
 
-	x = x || {};
-
-
-	return {
-
-		vod_id: sid(
-			x.id ||
-			x.drama_id ||
-			x.code ||
-			""
-		),
+item=item||{};
 
 
-		vod_name: x.name ||
-			x.title ||
-			x.drama_name ||
-			"",
+let vid=
+sid(
+item.id||
+item.drama_id||
+""
+);
 
 
-		vod_pic: x.img_y ||
-			x.img_x ||
-			x.img ||
-			x.cover ||
-			x.cover_url ||
-			"",
+return {
+
+vod_id:vid,
 
 
-		vod_remarks: x.update_label ||
-			x.corner ||
-			x.status ||
-			""
+vod_name:
+item.name||
+item.title||
+item.t||
+vid,
 
 
-	};
+vod_pic:
+item.img_y||
+item.img_x||
+item.img||
+item.cover||
+item.pic||
+"",
+
+
+vod_remarks:
+item.update_label||
+item.corner||
+(
+item.episode_count?
+"全"+item.episode_count+"集":
+""
+)
+
+};
 
 }
 
