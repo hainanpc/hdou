@@ -1,112 +1,513 @@
 // functions/proxy.js
-const HOST = "https://eyeonneb.cc"; // 与你 api.js 里 HOST 保持一致
-const UA =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-function shouldDirect(u) {
-  try {
-    const h = new URL(u).hostname;
-    // CloudFront / 图床可直连，不走 CF 代理，播放更稳
-    return (
-      h.endsWith("cloudfront.net") ||
-      h.includes("cloudfront.net")
-    );
-  } catch {
-    return false;
-  }
+// 黄豆短剧 CF Pages代理
+
+// OK影视播放器兼容版
+
+const SOURCE_HOST =
+
+	"https://eyeonneb.cc";
+
+const UA =
+
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36";
+
+// 判断m3u8
+
+function isM3u8(
+
+	target,
+
+	contentType,
+
+	buffer
+
+) {
+
+	let path =
+
+		target
+
+		.split("?")[0]
+
+		.toLowerCase();
+
+	if (path.endsWith(".m3u8"))
+
+		return true;
+
+	if (
+
+		contentType.includes("mpegurl") ||
+
+		contentType.includes(
+
+			"application/vnd.apple.mpegurl"
+
+		)
+
+	)
+
+		return true;
+
+	if (
+
+		buffer.length > 7
+
+	) {
+
+		let head =
+
+			String.fromCharCode(
+
+				buffer[0],
+
+				buffer[1],
+
+				buffer[2],
+
+				buffer[3],
+
+				buffer[4],
+
+				buffer[5],
+
+				buffer[6]
+
+			);
+
+		if (head == "#EXTM3U")
+
+			return true;
+
+	}
+
+	return false;
+
 }
 
-export async function onRequest(context) {
-  const { request } = context;
-  const url = new URL(request.url);
-  const target = url.searchParams.get("url");
-  if (!target) return new Response("missing url", { status: 400 });
+// m3u8重写
 
-  try {
-    const headers = {
-      "User-Agent": UA,
-      Accept: "*/*",
-      Origin: HOST,
-      Referer: HOST + "/home",
-    };
-    const range = request.headers.get("Range");
-    if (range) headers["Range"] = range;
+function rewriteM3u8(
 
-    const res = await fetch(target, { headers, redirect: "follow" });
-    const ctype = (res.headers.get("content-type") || "").toLowerCase();
-    const buf = await res.arrayBuffer();
-    const u8 = new Uint8Array(buf);
-    const pathOnly = target.split("?")[0].toLowerCase();
-    const isM3u8 =
-      pathOnly.endsWith(".m3u8") ||
-      ctype.includes("mpegurl") ||
-      ctype.includes("application/vnd.apple.mpegurl") ||
-      (u8.length > 7 &&
-        String.fromCharCode(u8[0], u8[1], u8[2], u8[3], u8[4], u8[5], u8[6]) ===
-          "#EXTM3U");
+	text,
 
-    const origin = url.origin;
+	origin,
 
-    if (isM3u8) {
-      const text = new TextDecoder("utf-8").decode(u8);
-      const out = [];
-      for (const line of text.split(/\r?\n/)) {
-        const s = line.trim();
-        if (!s) {
-          out.push(line);
-          continue;
-        }
-        if (s.startsWith("#")) {
-          out.push(
-            line.replace(/URI="([^"]+)"/gi, (_, raw) => {
-              try {
-                const abs = new URL(raw, target).href;
-                if (shouldDirect(abs) || abs.startsWith(origin)) {
-                  return `URI="${abs}"`;
-                }
-                return `URI="${origin}/proxy?url=${encodeURIComponent(abs)}"`;
-              } catch {
-                return `URI="${raw}"`;
-              }
-            })
-          );
-          continue;
-        }
-        try {
-          const abs = new URL(s, target).href;
-          if (shouldDirect(abs)) {
-            out.push(abs); // 分片直连 CloudFront
-          } else {
-            out.push(`${origin}/proxy?url=${encodeURIComponent(abs)}`);
-          }
-        } catch {
-          out.push(s);
-        }
-      }
-      return new Response(out.join("\n") + "\n", {
-        status: 200,
-        headers: {
-          "Content-Type": "application/vnd.apple.mpegurl",
-          "Access-Control-Allow-Origin": "*",
-          "Cache-Control": "no-cache",
-        },
-      });
-    }
+	base
 
-    const respHeaders = {
-      "Content-Type": res.headers.get("content-type") || "application/octet-stream",
-      "Access-Control-Allow-Origin": "*",
-      "Accept-Ranges": "bytes",
-      "Cache-Control": "public, max-age=3600",
-    };
-    if (res.headers.get("content-range")) {
-      respHeaders["Content-Range"] = res.headers.get("content-range");
-    }
-    if (res.headers.get("content-length")) {
-      respHeaders["Content-Length"] = res.headers.get("content-length");
-    }
-    return new Response(buf, { status: res.status, headers: respHeaders });
-  } catch (e) {
-    return new Response(`proxy error: ${e.message}`, { status: 500 });
-  }
+) {
+
+	let lines = [];
+
+	for (
+
+		let line of text.split(/\r?\n/)
+
+	) {
+
+		let s = line.trim();
+
+		if (!s) {
+
+			lines.push(line);
+
+			continue;
+
+		}
+
+		// EXT-X-KEY URI
+
+		if (
+
+			s.startsWith("#")
+
+		) {
+
+			let n =
+
+				line.replace(
+
+					/URI="([^"]+)"/gi,
+
+					function(
+
+						all,
+
+						uri
+
+					) {
+
+						try {
+
+							let abs =
+
+								new URL(
+
+									uri,
+
+									base
+
+								)
+
+								.href;
+
+							return `URI="${origin}/proxy?url=${encodeURIComponent(abs)}"`;
+
+						} catch (e) {
+
+							return all;
+
+						}
+
+					});
+
+			lines.push(n);
+
+			continue;
+
+		}
+
+		// ts分片
+
+		try {
+
+			let abs =
+
+				new URL(
+
+					s,
+
+					base
+
+				)
+
+				.href;
+
+			lines.push(
+
+				`${origin}/proxy?url=${encodeURIComponent(abs)}`
+
+			);
+
+		} catch (e) {
+
+			lines.push(line);
+
+		}
+
+	}
+
+	return lines.join("\n") + "\n";
+
+}
+
+// ============================
+
+// CF入口
+
+// ============================
+
+export async function onRequest(
+
+	context
+
+) {
+
+	const request =
+
+		context.request;
+
+	const url =
+
+		new URL(
+
+			request.url
+
+		);
+
+	const target =
+
+		url.searchParams.get(
+
+			"url"
+
+		);
+
+	if (!target) {
+
+		return new Response(
+
+			"missing url",
+
+			{
+
+				status: 400
+
+			}
+
+		);
+
+	}
+
+	try {
+
+		let headers = {
+
+			"User-Agent": UA,
+
+			"Accept": "*/*",
+
+			"Origin":
+
+				SOURCE_HOST,
+
+			"Referer":
+
+				SOURCE_HOST + "/home"
+
+		};
+
+		// Range支持
+
+		let range =
+
+			request.headers.get(
+
+				"Range"
+
+			);
+
+		if (range) {
+
+			headers.Range = range;
+
+		}
+
+		let res =
+
+			await fetch(
+
+				target,
+
+				{
+
+					headers,
+
+					redirect: "follow"
+
+				}
+
+			);
+
+		let contentType =
+
+			(
+
+				res.headers.get(
+
+					"content-type"
+
+				)
+
+				||
+
+				""
+
+			)
+
+			.toLowerCase();
+
+		let buffer =
+
+			new Uint8Array(
+
+				await res.arrayBuffer()
+
+			);
+
+		let origin =
+
+			url.origin;
+
+		// =====================
+
+		// m3u8
+
+		// =====================
+
+		if (
+
+			isM3u8(
+
+				target,
+
+				contentType,
+
+				buffer
+
+			)
+
+		) {
+
+			let text =
+
+				new TextDecoder()
+
+				.decode(buffer);
+
+			let output =
+
+				rewriteM3u8(
+
+					text,
+
+					origin,
+
+					target
+
+				);
+
+			return new Response(
+
+				output,
+
+				{
+
+					status: 200,
+
+					headers: {
+
+						"Content-Type":
+
+							"application/vnd.apple.mpegurl",
+
+						"Access-Control-Allow-Origin":
+
+							"*",
+
+						"Cache-Control":
+
+							"no-cache"
+
+					}
+
+				}
+
+			);
+
+		}
+
+		// =====================
+
+		// ts/key/图片
+
+		// =====================
+
+		let respHeaders = {
+
+			"Content-Type":
+
+				res.headers.get(
+
+					"content-type"
+
+				)
+
+				||
+
+				"application/octet-stream",
+
+			"Access-Control-Allow-Origin":
+
+				"*",
+
+			"Accept-Ranges":
+
+				"bytes",
+
+			"Content-Disposition":
+
+				"inline",
+
+			"Cache-Control":
+
+				"public,max-age=3600"
+
+		};
+
+		let cr =
+
+			res.headers.get(
+
+				"content-range"
+
+			);
+
+		if (cr) {
+
+			respHeaders[
+
+				"Content-Range"
+
+			] = cr;
+
+		}
+
+		let cl =
+
+			res.headers.get(
+
+				"content-length"
+
+			);
+
+		if (cl) {
+
+			respHeaders[
+
+				"Content-Length"
+
+			] = cl;
+
+		}
+
+		return new Response(
+
+			buffer,
+
+			{
+
+				status:
+
+					res.status,
+
+				headers:
+
+					respHeaders
+
+			}
+
+		);
+
+	} catch (e) {
+
+		return new Response(
+
+			"proxy error: "
+
+			+
+
+			e.message,
+
+			{
+
+				status: 500
+
+			}
+
+		);
+
+	}
+
 }
