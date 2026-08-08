@@ -552,32 +552,13 @@ async function searchContent(key, pg) {
  * @param {string} id 剧集标识 vid|seq
  * @returns {object} 播放返回体
  */
-async function playerContent(id) {
-    const arr = String(id ?? "").split("|");
-    const vid = sid(arr[0]);
-    const seq = arr[1] || "1";
-    let playUrl = "";
-
-    try {
-        const data = await callApi("/drama/play", {
-            id: vid,
-            seq: String(seq)
-        });
-        const d = data.data || {};
-        playUrl = d.m3u8 || d.url || "";
-    } catch (err) {
-        console.warn("获取直链失败，使用兜底路由:", err.message);
-    }
-
-    if (!playUrl) {
-        playUrl = `${HOST}/api/drama/hls/${vid}/${seq}/play.m3u8`;
-    }
-    const proxyUrl = `/proxy?url=${encodeURIComponent(playUrl)}`;
-
+async function playerContent(id, base) {
+    // ... 前面不变，拿到 playUrl 后：
+    const proxy = `${base}/proxy?url=${encodeURIComponent(playUrl)}`;
     return {
         parse: 0,
         jx: 0,
-        url: proxyUrl,
+        url: proxy,
         playUrl: "",
         header: {
             "User-Agent": UA,
@@ -591,47 +572,69 @@ async function playerContent(id) {
 export async function onRequest(context) {
     const request = context.request;
     const url = new URL(request.url);
-    /** 快速获取url参数，空兜底 */
     const getParam = (k) => url.searchParams.get(k) ?? "";
 
-    const ac = getParam("ac");
-    const tid = getParam("tid") || getParam("t");
-    const pg = getParam("pg") || getParam("page");
-    const wd = getParam("wd");
+    let ac = getParam("ac") || getParam("action");
+    const tid = getParam("tid") || getParam("t") || getParam("type") || getParam("class");
+    const pg = getParam("pg") || getParam("page") || "1";
+    const wd = getParam("wd") || getParam("key") || getParam("keywords");
     const ids = getParam("ids");
-    let result = {};
+    const playId = getParam("id") || getParam("play");
 
+    // 解析 ext（OK影视 base64 的 extend）
+    let extend = {
+        sub: getParam("sub"),
+        order: getParam("order"),
+        update_status: getParam("update_status")
+    };
+    const ext = getParam("ext");
+    if (ext) {
+        try {
+            const json = atob(decodeURIComponent(ext));
+            const obj = JSON.parse(json);
+            if (obj && typeof obj === "object") {
+                extend = { ...extend, ...obj };
+            }
+        } catch (_) {}
+    }
+
+    // ★ 关键：点分类时壳会发 ac=detail&t=分类id&pg=1（没有 ids）
+    // 这种请求必须当 category，不能当详情
+    if (ac === "detail" && tid && !ids) {
+        ac = "category";
+    }
+    // 兼容 ac=list
+    if (ac === "list") {
+        ac = (!tid || tid === "all" || tid === "recommend") ? "home" : "category";
+    }
+
+    if (!ac) {
+        if (wd) ac = "search";
+        else if (ids) ac = "detail";
+        else if (tid) ac = "category";
+        else ac = "home";
+    }
+
+    let result = {};
     try {
         switch (ac) {
             case "home":
                 result = await homeContent();
                 break;
             case "category":
-                result = await categoryContent(tid, pg, {
-                    sub: getParam("sub"),
-                    order: getParam("order"),
-                    update_status: getParam("update_status")
-                });
+                result = await categoryContent(tid || "all", pg, extend);
                 break;
             case "detail":
-                result = await detailContent(ids.split(","));
+                result = await detailContent((ids || playId).split(","));
                 break;
             case "search":
                 result = await searchContent(wd, pg);
                 break;
             case "play":
-                result = await playerContent(getParam("id") || getParam("play"));
-                break;
+    result = await playerContent(playId || ids, url.origin);
+    break;
             default:
-                if (wd) {
-                    result = await searchContent(wd, pg);
-                } else if (ids) {
-                    result = await detailContent(ids.split(","));
-                } else if (tid) {
-                    result = await categoryContent(tid, pg, {});
-                } else {
-                    result = await homeContent();
-                }
+                result = await homeContent();
         }
 
         return new Response(JSON.stringify(result), {
@@ -643,9 +646,7 @@ export async function onRequest(context) {
     } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), {
             status: 500,
-            headers: {
-                "Content-Type": "application/json;charset=utf-8"
-            }
+            headers: { "Content-Type": "application/json;charset=utf-8" }
         });
     }
 }
