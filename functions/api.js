@@ -3,21 +3,16 @@ const HOST = "https://eyeonneb.cc";
 const API = HOST + "/api";
 const PLATFORM_KEY = "7961beb44246e3012ce228d6b5ced05a";
 const VERSION = "2.0.0";
-const DEVICE_TYPE = "web"; // 可试: web / android / ios
+const DEVICE_TYPE = "web"; // 必须 web，android/ios 会 2001
 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-let LAST_API_RAW = null;
-
-// ==================== 工具 ====================
 function uuidHex() {
-  // 与 Python uuid.uuid4().hex 一致（无横线）
   return crypto.randomUUID().replace(/-/g, "");
 }
 
 function uuidWithDash() {
-  // 与 Python str(uuid.uuid4()) 一致（有横线）
   return crypto.randomUUID();
 }
 
@@ -27,21 +22,26 @@ function toHex(buffer) {
     .join("");
 }
 
+function hexToBytes(hex) {
+  const arr = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < arr.length; i++) {
+    arr[i] = parseInt(hex.substr(i * 2, 2), 16);
+  }
+  return arr;
+}
+
 async function hmacSha256(keyStr, dataBytes) {
-  const enc = new TextEncoder();
   const key = await crypto.subtle.importKey(
     "raw",
-    enc.encode(keyStr),
+    new TextEncoder().encode(keyStr),
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign"]
   );
-  const sig = await crypto.subtle.sign("HMAC", key, dataBytes);
-  return new Uint8Array(sig);
+  return new Uint8Array(await crypto.subtle.sign("HMAC", key, dataBytes));
 }
 
 async function aesCbcEncrypt(data, key, iv) {
-  // Web Crypto 会自动 PKCS7 pad，不要再手动 pad
   const cryptoKey = await crypto.subtle.importKey(
     "raw",
     key,
@@ -49,16 +49,12 @@ async function aesCbcEncrypt(data, key, iv) {
     false,
     ["encrypt"]
   );
-  const encrypted = await crypto.subtle.encrypt(
-    { name: "AES-CBC", iv },
-    cryptoKey,
-    data
+  return new Uint8Array(
+    await crypto.subtle.encrypt({ name: "AES-CBC", iv }, cryptoKey, data)
   );
-  return new Uint8Array(encrypted);
 }
 
 async function aesCbcDecrypt(data, key, iv) {
-  // Web Crypto 会自动 unpad
   const cryptoKey = await crypto.subtle.importKey(
     "raw",
     key,
@@ -66,12 +62,9 @@ async function aesCbcDecrypt(data, key, iv) {
     false,
     ["decrypt"]
   );
-  const decrypted = await crypto.subtle.decrypt(
-    { name: "AES-CBC", iv },
-    cryptoKey,
-    data
+  return new Uint8Array(
+    await crypto.subtle.decrypt({ name: "AES-CBC", iv }, cryptoKey, data)
   );
-  return new Uint8Array(decrypted);
 }
 
 async function gzipCompress(data) {
@@ -90,31 +83,18 @@ async function gzipDecompress(data) {
   return new Uint8Array(await new Response(stream.readable).arrayBuffer());
 }
 
-function hexToBytes(hex) {
-  const arr = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < arr.length; i++) {
-    arr[i] = parseInt(hex.substr(i * 2, 2), 16);
-  }
-  return arr;
-}
-
-// ==================== 核心请求 ====================
-async function callApi(path, data = {}, sessionId, deviceType = DEVICE_TYPE) {
+async function callApi(path, data = {}, sessionId) {
   path = "/" + String(path).replace(/^\//, "");
-  const rid = uuidWithDash(); // 有横线，与 Python str(uuid.uuid4()) 一致
-  const ridHex = rid.replace(/-/g, "");
-  const key = await hmacSha256(PLATFORM_KEY, hexToBytes(ridHex));
+  const rid = uuidWithDash();
+  const key = await hmacSha256(PLATFORM_KEY, hexToBytes(rid.replace(/-/g, "")));
   const iv = crypto.getRandomValues(new Uint8Array(16));
 
-  // 与 Python separators=(",", ":") 一致
   const payload = JSON.stringify({
     token: "",
     deviceId: sessionId,
     data: data || {},
   });
-  const raw = new TextEncoder().encode(payload);
-  const compressed = await gzipCompress(raw);
-  // 不再手动 PKCS7，交给 Web Crypto
+  const compressed = await gzipCompress(new TextEncoder().encode(payload));
   const encrypted = await aesCbcEncrypt(compressed, key, iv);
 
   const body = new Uint8Array(iv.length + encrypted.length);
@@ -122,7 +102,6 @@ async function callApi(path, data = {}, sessionId, deviceType = DEVICE_TYPE) {
   body.set(encrypted, iv.length);
 
   const ts = Math.floor(Date.now() / 1000);
-  // 与 Python: Dart|sessionId|rid|ts|path
   const signStr = `Dart|${sessionId}|${rid}|${ts}|${path}`;
   const signHash = await crypto.subtle.digest(
     "SHA-256",
@@ -138,7 +117,7 @@ async function callApi(path, data = {}, sessionId, deviceType = DEVICE_TYPE) {
     Referer: HOST + "/home",
     "Content-Type": "application/octet-stream",
     version: VERSION,
-    deviceType: deviceType,
+    deviceType: DEVICE_TYPE,
     time: String(ts),
     sign: sign,
     requestId: rid,
@@ -149,27 +128,17 @@ async function callApi(path, data = {}, sessionId, deviceType = DEVICE_TYPE) {
     systemVersion: "",
   };
 
-  const res = await fetch(API + path, {
-    method: "POST",
-    headers,
-    body,
-  });
-
+  const res = await fetch(API + path, { method: "POST", headers, body });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`API ${path} ${res.status} body=${text.slice(0, 300)}`);
+    throw new Error(`API ${path} ${res.status} body=${text.slice(0, 200)}`);
   }
 
   const blob = new Uint8Array(await res.arrayBuffer());
-
-  // 明文 JSON（极少情况）
   if (blob.length < 32 || (blob.length - 16) % 16 !== 0) {
     try {
-      const parsed = JSON.parse(new TextDecoder().decode(blob));
-      LAST_API_RAW = parsed;
-      return parsed;
+      return JSON.parse(new TextDecoder().decode(blob));
     } catch {
-      LAST_API_RAW = { _raw_len: blob.length };
       return {};
     }
   }
@@ -178,19 +147,23 @@ async function callApi(path, data = {}, sessionId, deviceType = DEVICE_TYPE) {
   if (plain[0] === 0x1f && plain[1] === 0x8b) {
     plain = await gzipDecompress(plain);
   }
-  const parsed = JSON.parse(new TextDecoder().decode(plain));
-  LAST_API_RAW = parsed;
-  return parsed;
+  return JSON.parse(new TextDecoder().decode(plain));
 }
 
-// ==================== 数据转换 ====================
+/** 从接口结果中取出列表：支持 {data:{list:[]}} / {list:[]} / 数组 */
 function listData(data) {
   if (Array.isArray(data)) return data;
   if (!data || typeof data !== "object") return [];
+  // 业务失败
+  if (data.status === "n") return [];
   if (Array.isArray(data.list)) return data.list;
   if (Array.isArray(data.items)) return data.items;
   if (Array.isArray(data.data)) return data.data;
-  if (data.data && typeof data.data === "object") return listData(data.data);
+  if (data.data && typeof data.data === "object") {
+    if (Array.isArray(data.data.list)) return data.data.list;
+    if (Array.isArray(data.data.items)) return data.data.items;
+    return listData(data.data);
+  }
   return [];
 }
 
@@ -221,11 +194,11 @@ function toVod(item, base) {
   };
 }
 
-async function getClasses(sessionId, deviceType) {
+async function getClasses(sessionId) {
   const arr = [{ type_id: "all", type_name: "全部短剧" }];
   try {
-    const data = await callApi("/drama/navList", {}, sessionId, deviceType);
-    for (const item of listData(data.data || data)) {
+    const data = await callApi("/drama/navList", {}, sessionId);
+    for (const item of listData(data)) {
       const tid = String(item.code || item.id || item.cat_id || "");
       const name = item.name || item.title || tid;
       if (tid && name) arr.push({ type_id: tid, type_name: name });
@@ -234,41 +207,30 @@ async function getClasses(sessionId, deviceType) {
   return arr;
 }
 
-// ==================== 业务 ====================
-async function homeContent(base, sessionId, deviceType) {
+async function homeContent(base, sessionId) {
   const data = await callApi(
     "/drama/list",
     { page: "1", page_size: "18" },
-    sessionId,
-    deviceType
+    sessionId
   );
-  const classes = await getClasses(sessionId, deviceType);
-  const items = listData(data);
+  const classes = await getClasses(sessionId);
   return {
     class: classes,
-    list: items.map((x) => toVod(x, base)),
+    list: listData(data).map((x) => toVod(x, base)),
     parse: 0,
     jx: 0,
-    _debug: {
-      deviceType,
-      sessionId,
-      raw: data,
-      list_len: items.length,
-    },
   };
 }
 
-async function categoryContent(tid, pg, extend, base, sessionId, deviceType) {
+async function categoryContent(tid, pg, extend, base, sessionId) {
   let items = [];
-  let raw = null;
   if (tid === "yuandou") {
-    raw = await callApi(
+    const data = await callApi(
       "/drama/navBlock",
       { code: "yuandou", tab: "recommend", page: String(pg) },
-      sessionId,
-      deviceType
+      sessionId
     );
-    const blocks = listData(raw.data || raw);
+    const blocks = listData(data);
     for (const b of blocks) {
       if (b && Array.isArray(b.items)) items = items.concat(b.items);
       else if (b && (b.id || b.drama_id)) items.push(b);
@@ -278,8 +240,8 @@ async function categoryContent(tid, pg, extend, base, sessionId, deviceType) {
     if (tid && tid !== "all" && tid !== "recommend") req.cat_id = tid;
     if (extend?.order) req.order = extend.order;
     if (extend?.update_status) req.update_status = extend.update_status;
-    raw = await callApi("/drama/list", req, sessionId, deviceType);
-    items = listData(raw);
+    const data = await callApi("/drama/list", req, sessionId);
+    items = listData(data);
   }
   return {
     page: Number(pg),
@@ -289,17 +251,16 @@ async function categoryContent(tid, pg, extend, base, sessionId, deviceType) {
     list: items.map((x) => toVod(x, base)),
     parse: 0,
     jx: 0,
-    _debug: { tid, deviceType, raw, items_len: items.length },
   };
 }
 
-async function detailContent(ids, base, sessionId, deviceType) {
+async function detailContent(ids, base, sessionId) {
   const vid = sid(ids[0]);
-  const obj = await callApi("/drama/detail", { id: vid }, sessionId, deviceType);
-  let data = obj?.data || obj;
-  if (!data || typeof data !== "object" || obj?.status === "n") {
-    return { list: [], _debug: { obj } };
-  }
+  const obj = await callApi("/drama/detail", { id: vid }, sessionId);
+  if (!obj || obj.status === "n") return { list: [] };
+
+  let data = obj.data || obj;
+  if (!data || typeof data !== "object") return { list: [] };
 
   if (Array.isArray(data.episodes)) {
     data.episodes.forEach((ep) => {
@@ -326,7 +287,9 @@ async function detailContent(ids, base, sessionId, deviceType) {
   const vod_id = sid(data.id || data.drama_id || vid);
   const name = data.name || data.title || data.t || vod_id;
   const eps = Array.isArray(data.episodes) ? data.episodes : [];
-  const count = Number(data.episode_count || data.free_episodes || eps.length || 1);
+  const count = Number(
+    data.episode_count || data.free_episodes || eps.length || 1
+  );
 
   let play = [];
   if (eps.length) {
@@ -363,12 +326,11 @@ async function detailContent(ids, base, sessionId, deviceType) {
   };
 }
 
-async function searchContent(key, pg, base, sessionId, deviceType) {
+async function searchContent(key, pg, base, sessionId) {
   const data = await callApi(
     "/drama/list",
     { page: String(pg), page_size: "18", keywords: String(key) },
-    sessionId,
-    deviceType
+    sessionId
   );
   const items = listData(data);
   return {
@@ -379,25 +341,22 @@ async function searchContent(key, pg, base, sessionId, deviceType) {
     list: items.map((x) => toVod(x, base)),
     parse: 0,
     jx: 0,
-    _debug: { key, deviceType, raw: data, items_len: items.length },
   };
 }
 
-async function playerContent(id, base, sessionId, deviceType) {
+async function playerContent(id, base, sessionId) {
   const [vid, seq] = String(id).split("|");
   const realVid = sid(vid);
   const realSeq = seq || "1";
 
   let url = "";
-  let raw = null;
   try {
-    raw = await callApi(
+    const obj = await callApi(
       "/drama/play",
       { id: realVid, seq: realSeq },
-      sessionId,
-      deviceType
+      sessionId
     );
-    const d = raw?.data || {};
+    const d = obj?.data || {};
     url = d.m3u8 || d.url || "";
   } catch (_) {}
 
@@ -421,25 +380,21 @@ async function playerContent(id, base, sessionId, deviceType) {
     header,
     headers: header,
     format: "application/x-mpegURL",
-    _debug: { raw },
   };
 }
 
-// ==================== 入口 ====================
 export async function onRequest(context) {
   const { request } = context;
   const url = new URL(request.url);
   const base = url.origin;
-  const ac = url.searchParams.get("ac") || url.searchParams.get("action") || "home";
-  // 固定 session，减少“新设备”触发风控的概率
-  const sessionId = url.searchParams.get("sid") || uuidHex();
-  const deviceType = url.searchParams.get("dt") || DEVICE_TYPE;
+  const ac = url.searchParams.get("ac") || "home";
+  const sessionId = uuidHex();
 
   try {
     let result;
     switch (ac) {
       case "home":
-        result = await homeContent(base, sessionId, deviceType);
+        result = await homeContent(base, sessionId);
         break;
       case "category":
         result = await categoryContent(
@@ -451,16 +406,14 @@ export async function onRequest(context) {
             sub: url.searchParams.get("sub"),
           },
           base,
-          sessionId,
-          deviceType
+          sessionId
         );
         break;
       case "detail":
         result = await detailContent(
           (url.searchParams.get("ids") || "").split(","),
           base,
-          sessionId,
-          deviceType
+          sessionId
         );
         break;
       case "search":
@@ -468,29 +421,16 @@ export async function onRequest(context) {
           url.searchParams.get("wd") || url.searchParams.get("key") || "",
           url.searchParams.get("pg") || "1",
           base,
-          sessionId,
-          deviceType
+          sessionId
         );
         break;
       case "play":
         result = await playerContent(
           url.searchParams.get("id") || "",
           base,
-          sessionId,
-          deviceType
+          sessionId
         );
         break;
-      case "debug": {
-        const path = url.searchParams.get("path") || "/drama/list";
-        const raw = await callApi(
-          path,
-          { page: "1", page_size: "18" },
-          sessionId,
-          deviceType
-        );
-        result = { path, deviceType, sessionId, raw };
-        break;
-      }
       default:
         result = { error: "unknown action", ac };
     }
@@ -502,18 +442,12 @@ export async function onRequest(context) {
       },
     });
   } catch (e) {
-    return new Response(
-      JSON.stringify({
-        error: e.message || String(e),
-        last_api: LAST_API_RAW,
-      }),
-      {
-        status: 500,
-        headers: {
-          "Content-Type": "application/json",
-          "Access-Control-Allow-Origin": "*",
-        },
-      }
-    );
+    return new Response(JSON.stringify({ error: e.message || String(e) }), {
+      status: 500,
+      headers: {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*",
+      },
+    });
   }
 }
