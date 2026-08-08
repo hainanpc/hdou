@@ -211,14 +211,17 @@ async function categoryContent(tid, pg, extend, base, sessionId) {
     items = listData(data);
   }
   return {
-    page: Number(pg),
-    pagecount: items.length < 18 ? Number(pg) : Number(pg) + 1,
-    limit: 18,
-    total: 99999,
-    list: items.map(x => toVod(x, base)),
-    parse: 0,
-    jx: 0
-  };
+  page: Number(pg),
+  pagecount: items.length < 18 ? Number(pg) : Number(pg) + 1,
+  limit: 18,
+  total: 99999,
+  list: items.map(x => toVod(x, base)),
+  parse: 0,
+  jx: 0,
+  _debug_items_len: items.length,
+  _debug_raw_keys: data && typeof data === "object" ? Object.keys(data) : [],
+  _debug_sample: items[0] || data
+};
 }
 
 async function detailContent(ids, base, sessionId) {
