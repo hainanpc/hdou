@@ -242,64 +242,56 @@ async function categoryContent(tid, pg, extend, base, sessionId) {
   const page = String(pg || "1");
   const typeId = String(tid || "all");
 
-  if (typeId === "yuandou") {
-    const data = await callApi(
-      "/drama/navBlock",
-      { code: "yuandou", tab: "recommend", page },
-      sessionId
-    );
-    const blocks = listData(data);
-    for (const b of blocks) {
-      if (b && Array.isArray(b.items)) items = items.concat(b.items);
-      else if (b && (b.id || b.drama_id)) items.push(b);
-    }
-  } else {
-    const req = { page, page_size: "18" };
+  const req = { page, page_size: "18" };
 
-    if (typeId && typeId !== "all" && typeId !== "recommend") {
-      const tabs = await getNavFilter(typeId, sessionId);
-      let idx = 0;
-      if (extend && extend.sub !== undefined && extend.sub !== "") {
-        idx = parseInt(extend.sub, 10);
-        if (Number.isNaN(idx)) idx = 0;
+  if (typeId && typeId !== "all" && typeId !== "recommend") {
+    // 1. 尝试获取分类的子筛选
+    const tabs = await getNavFilter(typeId, sessionId);
+    let idx = 0;
+    if (extend && extend.sub !== undefined && extend.sub !== "") {
+      idx = parseInt(extend.sub, 10);
+      if (Number.isNaN(idx)) idx = 0;
+    }
+    const sub =
+      tabs && tabs.length && idx >= 0 && idx < tabs.length ? tabs[idx] : null;
+    const flt =
+      sub && typeof sub === "object" && sub.filter && typeof sub.filter === "object"
+        ? sub.filter
+        : {};
+
+    if (flt.cat_id) req.cat_id = String(flt.cat_id);
+    if (flt.tag_id) req.tag_id = String(flt.tag_id);
+    if (flt.order) req.order = String(flt.order);
+
+    // 2. 如果筛选里没有 cat_id/tag_id，直接将当前分类 ID 赋值给 cat_id 兜底请求 /drama/list
+    if (!req.cat_id && !req.tag_id) {
+      req.cat_id = typeId;
+    }
+  }
+
+  if (extend && extend.order) req.order = extend.order;
+  if (extend && extend.update_status) {
+    req.update_status = extend.update_status;
+  }
+
+  // 3. 请求 /drama/list 获取对应分类数据
+  const data = await callApi("/drama/list", req, sessionId);
+  items = listData(data);
+
+  // 4. 如果 /drama/list 拿不到，再尝试备用的 navBlock 接口
+  if (!items.length && typeId && typeId !== "all" && typeId !== "recommend") {
+    try {
+      const data2 = await callApi(
+        "/drama/navBlock",
+        { code: typeId, tab: "recommend", page },
+        sessionId
+      );
+      const blocks2 = listData(data2);
+      for (const b of blocks2) {
+        if (b && Array.isArray(b.items)) items = items.concat(b.items);
+        else if (b && (b.id || b.drama_id)) items.push(b);
       }
-      const sub =
-        tabs && tabs.length && idx >= 0 && idx < tabs.length ? tabs[idx] : null;
-      const flt =
-        sub &&
-        typeof sub === "object" &&
-        sub.filter &&
-        typeof sub.filter === "object"
-          ? sub.filter
-          : {};
-
-      if (flt.cat_id) req.cat_id = String(flt.cat_id);
-      if (flt.tag_id) req.tag_id = String(flt.tag_id);
-      if (flt.order) req.order = String(flt.order);
-
-      if (!req.cat_id && !req.tag_id) {
-        const data2 = await callApi(
-          "/drama/navBlock",
-          { code: typeId, tab: "recommend", page },
-          sessionId
-        );
-        const blocks2 = listData(data2);
-        for (const b of blocks2) {
-          if (b && Array.isArray(b.items)) items = items.concat(b.items);
-          else if (b && (b.id || b.drama_id)) items.push(b);
-        }
-      }
-    }
-
-    if (extend && extend.order) req.order = extend.order;
-    if (extend && extend.update_status) {
-      req.update_status = extend.update_status;
-    }
-
-    if (!items.length) {
-      const data = await callApi("/drama/list", req, sessionId);
-      items = listData(data);
-    }
+    } catch (_) {}
   }
 
   return {
