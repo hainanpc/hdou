@@ -1,4 +1,4 @@
- // functions/api.js
+// functions/api.js
 const HOST = "https://eyeonneb.cc";
 const API = HOST + "/api";
 const PLATFORM_KEY = "7961beb44246e3012ce228d6b5ced05a";
@@ -6,6 +6,9 @@ const VERSION = "2.0.0";
 const DEVICE_TYPE = "web";
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+// 保存最近一次 API 原始返回，方便调试
+let LAST_API_RAW = null;
 
 // ==================== 工具函数 ====================
 function uuid() {
@@ -96,9 +99,13 @@ async function callApi(path, data = {}, sessionId) {
   const headers = {
     "User-Agent": UA,
     "Accept": "*/*",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
     "Origin": HOST,
     "Referer": HOST + "/home",
     "Content-Type": "application/octet-stream",
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-origin",
     "version": VERSION,
     "deviceType": DEVICE_TYPE,
     "time": String(ts),
@@ -117,14 +124,21 @@ async function callApi(path, data = {}, sessionId) {
     body
   });
 
-if (!res.ok) {
-  const text = await res.text().catch(() => "");
-  throw new Error(`API ${path} ${res.status} body=${text.slice(0, 300)}`);
-}
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`API ${path} ${res.status} body=${text.slice(0, 300)}`);
+  }
 
   const blob = new Uint8Array(await res.arrayBuffer());
   if (blob.length < 32 || (blob.length - 16) % 16 !== 0) {
-    try { return JSON.parse(new TextDecoder().decode(blob)); } catch { return {}; }
+    try {
+      const parsed = JSON.parse(new TextDecoder().decode(blob));
+      LAST_API_RAW = parsed;
+      return parsed;
+    } catch {
+      LAST_API_RAW = { _raw_len: blob.length, _hint: "not json" };
+      return {};
+    }
   }
 
   const plain = pkcs7Unpad(await aesCbcDecrypt(blob.slice(16), key, blob.slice(0, 16)));
@@ -132,7 +146,9 @@ if (!res.ok) {
   if (plain[0] === 0x1f && plain[1] === 0x8b) {
     final = await gzipDecompress(plain);
   }
-  return JSON.parse(new TextDecoder().decode(final));
+  const parsed = JSON.parse(new TextDecoder().decode(final));
+  LAST_API_RAW = parsed;
+  return parsed;
 }
 
 // ==================== 数据转换 ====================
@@ -169,11 +185,15 @@ function toVod(item, base) {
 
 async function getClasses(sessionId) {
   const arr = [{ type_id: "all", type_name: "全部短剧" }];
-  const data = await callApi("/drama/navList", {}, sessionId);
-  for (const item of listData(data.data || data)) {
-    const tid = String(item.code || item.id || item.cat_id || "");
-    const name = item.name || item.title || tid;
-    if (tid && name) arr.push({ type_id: tid, type_name: name });
+  try {
+    const data = await callApi("/drama/navList", {}, sessionId);
+    for (const item of listData(data.data || data)) {
+      const tid = String(item.code || item.id || item.cat_id || "");
+      const name = item.name || item.title || tid;
+      if (tid && name) arr.push({ type_id: tid, type_name: name });
+    }
+  } catch (e) {
+    // 忽略分类错误，至少返回全部
   }
   return arr;
 }
@@ -182,19 +202,29 @@ async function getClasses(sessionId) {
 async function homeContent(base, sessionId) {
   const data = await callApi("/drama/list", { page: "1", page_size: "18" }, sessionId);
   const classes = await getClasses(sessionId);
+  const items = listData(data);
   return {
     class: classes,
-    list: listData(data).map(x => toVod(x, base)),
+    list: items.map(x => toVod(x, base)),
     parse: 0,
-    jx: 0
+    jx: 0,
+    _debug: {
+      raw_type: typeof data,
+      raw_keys: data && typeof data === "object" ? Object.keys(data) : [],
+      list_len: items.length,
+      classes_len: classes.length,
+      raw_sample: data,
+      last_api: LAST_API_RAW
+    }
   };
 }
 
 async function categoryContent(tid, pg, extend, base, sessionId) {
   let items = [];
+  let raw = null;
   if (tid === "yuandou") {
-    const data = await callApi("/drama/navBlock", { code: "yuandou", tab: "recommend", page: String(pg) }, sessionId);
-    const blocks = listData(data.data || data);
+    raw = await callApi("/drama/navBlock", { code: "yuandou", tab: "recommend", page: String(pg) }, sessionId);
+    const blocks = listData(raw.data || raw);
     for (const b of blocks) {
       if (b && Array.isArray(b.items)) items = items.concat(b.items);
       else if (b && (b.id || b.drama_id)) items.push(b);
@@ -202,35 +232,39 @@ async function categoryContent(tid, pg, extend, base, sessionId) {
   } else {
     const req = { page: String(pg), page_size: "18" };
     if (tid && tid !== "all" && tid !== "recommend") {
-      // 简化：直接用 tid 作为 cat 相关（完整 filter 可后续扩展）
       req.cat_id = tid;
     }
     if (extend?.order) req.order = extend.order;
     if (extend?.update_status) req.update_status = extend.update_status;
-    const data = await callApi("/drama/list", req, sessionId);
-    items = listData(data);
+    raw = await callApi("/drama/list", req, sessionId);
+    items = listData(raw);
   }
   return {
-  page: Number(pg),
-  pagecount: items.length < 18 ? Number(pg) : Number(pg) + 1,
-  limit: 18,
-  total: 99999,
-  list: items.map(x => toVod(x, base)),
-  parse: 0,
-  jx: 0,
-  _debug_items_len: items.length,
-  _debug_raw_keys: data && typeof data === "object" ? Object.keys(data) : [],
-  _debug_sample: items[0] || data
-};
+    page: Number(pg),
+    pagecount: items.length < 18 ? Number(pg) : Number(pg) + 1,
+    limit: 18,
+    total: 99999,
+    list: items.map(x => toVod(x, base)),
+    parse: 0,
+    jx: 0,
+    _debug: {
+      tid,
+      items_len: items.length,
+      raw_keys: raw && typeof raw === "object" ? Object.keys(raw) : [],
+      raw_sample: raw,
+      last_api: LAST_API_RAW
+    }
+  };
 }
 
 async function detailContent(ids, base, sessionId) {
   const vid = sid(ids[0]);
   const obj = await callApi("/drama/detail", { id: vid }, sessionId);
   let data = obj?.data || obj;
-  if (!data || typeof data !== "object") return { list: [] };
+  if (!data || typeof data !== "object") {
+    return { list: [], _debug: { obj, last_api: LAST_API_RAW } };
+  }
 
-  // unlock
   if (Array.isArray(data.episodes)) {
     data.episodes.forEach(ep => {
       if (ep && typeof ep === "object") {
@@ -292,7 +326,14 @@ async function searchContent(key, pg, base, sessionId) {
     total: 99999,
     list: items.map(x => toVod(x, base)),
     parse: 0,
-    jx: 0
+    jx: 0,
+    _debug: {
+      key,
+      items_len: items.length,
+      raw_keys: data && typeof data === "object" ? Object.keys(data) : [],
+      raw_sample: data,
+      last_api: LAST_API_RAW
+    }
   };
 }
 
@@ -302,9 +343,10 @@ async function playerContent(id, base, sessionId) {
   const realSeq = seq || "1";
 
   let url = "";
+  let raw = null;
   try {
-    const obj = await callApi("/drama/play", { id: realVid, seq: realSeq }, sessionId);
-    const data = obj?.data || {};
+    raw = await callApi("/drama/play", { id: realVid, seq: realSeq }, sessionId);
+    const data = raw?.data || {};
     url = data.m3u8 || data.url || "";
   } catch (e) {}
 
@@ -327,7 +369,8 @@ async function playerContent(id, base, sessionId) {
     jx: 0,
     header,
     headers: header,
-    format: "application/x-mpegURL"
+    format: "application/x-mpegURL",
+    _debug: { raw, last_api: LAST_API_RAW }
   };
 }
 
@@ -380,8 +423,15 @@ export async function onRequest(context) {
           sessionId
         );
         break;
+      // 纯调试：只看原始 API 返回
+      case "debug": {
+        const path = url.searchParams.get("path") || "/drama/list";
+        const raw = await callApi(path, { page: "1", page_size: "18" }, sessionId);
+        result = { path, raw, keys: raw && typeof raw === "object" ? Object.keys(raw) : [] };
+        break;
+      }
       default:
-        result = { error: "unknown action" };
+        result = { error: "unknown action", ac };
     }
 
     return new Response(JSON.stringify(result), {
@@ -391,7 +441,10 @@ export async function onRequest(context) {
       }
     });
   } catch (e) {
-    return new Response(JSON.stringify({ error: e.message || String(e) }), {
+    return new Response(JSON.stringify({
+      error: e.message || String(e),
+      last_api: LAST_API_RAW
+    }), {
       status: 500,
       headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
     });
