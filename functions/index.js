@@ -243,28 +243,55 @@ async function categoryContent(tid, pg, extend, base, sessionId) {
   const page = String(pg || "1");
   const typeId = String(tid || "all");
 
-  if (typeId === "yuandou") {
-    const data = await callApi(
-      "/drama/navBlock",
-      { code: "yuandou", tab: "recommend", page },
-      sessionId
-    );
-    const blocks = listData(data.data || data);
-    for (const b of blocks) {
-      if (b && Array.isArray(b.items)) items = items.concat(b.items);
-      else if (b && (b.id || b.drama_id)) items.push(b);
-    }
-  } else {
-    const req = { page, page_size: "18" };
-    if (typeId && typeId !== "all" && typeId !== "recommend") {
+  try {
+    if (typeId === "all" || !typeId || typeId === "recommend") {
+      const req = { page, page_size: "18" };
+      if (extend && extend.order) req.order = extend.order;
+      if (extend && extend.update_status) req.update_status = extend.update_status;
+      
+      const data = await callApi("/drama/list", req, sessionId);
+      items = listData(data);
+    } else if (typeId === "yuandou" || typeId === "aiman" || typeId === "erciyuan" || typeId === "caibian" || typeId === "zhenren" || typeId === "zongyi" || typeId === "heiliao" || typeId === "chuanmei") {
+      // 针对所有独立专区，优先请求 navBlock，若为空则降级走 list 过滤
+      let blockData = null;
+      try {
+        blockData = await callApi(
+          "/drama/navBlock",
+          { code: typeId, tab: "recommend", page },
+          sessionId
+        );
+      } catch (_) {}
+
+      let blocks = listData(blockData);
+      if (!blocks.length && blockData && typeof blockData === "object") {
+        if (blockData.data) blocks = listData(blockData.data);
+      }
+
+      for (const b of blocks) {
+        if (b && Array.isArray(b.items)) {
+          items = items.concat(b.items);
+        } else if (b && Array.isArray(b.list)) {
+          items = items.concat(b.list);
+        } else if (b && (b.id || b.drama_id)) {
+          items.push(b);
+        }
+      }
+
+      // 如果 navBlock 没有拉到数据，兜底尝试带 code/cat_id 走标准 list 接口
+      if (!items.length) {
+        const req = { page, page_size: "18", code: typeId };
+        const data = await callApi("/drama/list", req, sessionId);
+        items = listData(data);
+      }
+    } else {
+      const req = { page, page_size: "18", code: typeId };
       const tabs = await getNavFilter(typeId, sessionId);
       let idx = 0;
       if (extend && extend.sub !== undefined && extend.sub !== "") {
         idx = parseInt(extend.sub, 10);
         if (Number.isNaN(idx)) idx = 0;
       }
-      const sub =
-        tabs && tabs.length && idx >= 0 && idx < tabs.length ? tabs[idx] : null;
+      const sub = tabs && tabs.length && idx >= 0 && idx < tabs.length ? tabs[idx] : null;
       const flt =
         sub && typeof sub === "object" && sub.filter && typeof sub.filter === "object"
           ? sub.filter
@@ -273,16 +300,16 @@ async function categoryContent(tid, pg, extend, base, sessionId) {
       if (flt.cat_id) req.cat_id = String(flt.cat_id);
       if (flt.tag_id) req.tag_id = String(flt.tag_id);
       req.order = flt.order || (extend && extend.order) || "";
-    } else {
-      if (extend && extend.order) req.order = extend.order;
-    }
 
-    if (extend && extend.update_status) {
-      req.update_status = extend.update_status;
-    }
+      if (extend && extend.update_status) {
+        req.update_status = extend.update_status;
+      }
 
-    const data = await callApi("/drama/list", req, sessionId);
-    items = listData(data);
+      const data = await callApi("/drama/list", req, sessionId);
+      items = listData(data);
+    }
+  } catch (e) {
+    items = [];
   }
 
   return {
