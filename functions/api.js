@@ -1300,8 +1300,11 @@ export async function onRequest(
 
 
 	let pg =
-		url.searchParams.get("pg") ||
-		"1";
+url.searchParams.get("pg")
+||
+url.searchParams.get("page")
+||
+"1";
 
 
 
@@ -1340,31 +1343,26 @@ export async function onRequest(
 
 			case "category":
 
+result =
+await categoryContent(
+tid,
+url.searchParams.get("pg")
+||
+url.searchParams.get("page")
+||
+"1",
+{
 
-			case "list":
+sub:url.searchParams.get("sub"),
 
+order:url.searchParams.get("order"),
 
-				result =
-					await categoryContent(
+update_status:url.searchParams.get("update_status")
 
-						tid,
+}
+);
 
-						pg,
-
-						{
-
-							sub: url.searchParams.get("sub"),
-
-							order: url.searchParams.get("order"),
-
-							update_status: url.searchParams.get("update_status")
-
-						}
-
-					);
-
-
-				break;
+break;
 
 
 
