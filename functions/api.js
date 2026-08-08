@@ -425,6 +425,13 @@ async function homeContent() {
  * @returns {object} 标准分页结构
  */
 async function categoryContent(tid, pg, extend = {}) {
+	console.log(
+"category tid=",
+tid,
+"page=",
+page
+);
+	
     const page = String(pg || "1");
     const req = {
         page: page,
