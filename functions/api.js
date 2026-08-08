@@ -233,18 +233,74 @@ function listData(data) {
 }
 
 // ================= 短剧标准化 Vod 对象转换 =================
-function vod(item) {
-    item = item ?? {};
-    const vid = sid(item.id || item.drama_id || "");
+function categoryVod(item) {
+
+    item = item || {};
+
+    const vid = sid(
+        item.id ||
+        item.drama_id ||
+        ""
+    );
+
     if (!vid) return null;
+
     return {
         vod_id: vid,
-        vod_name: item.name || item.title || vid,
-        vod_pic: item.img || item.cover || item.cover_url || "",
-        vod_remarks: item.update_label || item.remark || "",
-        vod_content: item.name || "",
-        vod_play_from: "黄豆短剧",
-        vod_play_url: `第1集$${vid}|1`
+        vod_name:
+            item.name ||
+            item.title ||
+            vid,
+
+        vod_pic:
+            item.img ||
+            item.cover ||
+            item.cover_url ||
+            "",
+
+        vod_remarks:
+            item.update_label ||
+            item.remark ||
+            ""
+    };
+}
+
+// 详情页
+
+function detailVod(item){
+
+    const vid=sid(
+        item.id ||
+        item.drama_id ||
+        ""
+    );
+
+    return {
+
+        vod_id:vid,
+
+        vod_name:
+        item.name ||
+        item.title ||
+        vid,
+
+        vod_pic:
+        item.img ||
+        item.cover ||
+        "",
+
+        vod_remarks:
+        item.update_label ||
+        "",
+
+        vod_content:
+        item.name || "",
+
+        vod_play_from:
+        "黄豆短剧",
+
+        vod_play_url:
+        `第1集$${vid}|1`
     };
 }
 
@@ -310,7 +366,7 @@ async function homeContent() {
     return {
         class: classes,
         filters: await getFilters(classes),
-        list: listData(data).map(vod).filter(Boolean),
+        list: listData(data).map(categoryVod).filter(Boolean),
         parse: 0,
         jx: 0
     };
@@ -351,7 +407,7 @@ async function categoryContent(tid, pg, extend = {}) {
         pagecount: pagecount,
         limit: PAGE_SIZE,
         total: total,
-        list: items.map(vod).filter(Boolean),
+        list: items.map(categoryVod).filter(Boolean),
         class_name: "黄豆短剧",
         parse: 0,
         jx: 0
@@ -416,7 +472,7 @@ async function searchContent(key, pg) {
         pagecount: pagecount,
         limit: PAGE_SIZE,
         total: total,
-        list: arr.map(vod).filter(Boolean),
+        list: arr.map(categoryVod).filter(Boolean),
         parse: 0,
         jx: 0
     };
