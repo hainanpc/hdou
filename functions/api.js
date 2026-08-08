@@ -21,20 +21,32 @@ const DEVICE_TYPE = "web";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36";
 const PAGE_SIZE = 18;
 
-// ================= 工具函数 =================
-/** 去除rp_前缀 */
+// ==================== 工具函数 ====================
+/**
+ * 去除id前缀 rp_
+ * @param {any} x 原始id
+ * @returns {string} 清理后id
+ */
 function sid(x) {
     const str = String(x ?? "");
     return str.replace(/^rp_/, "");
 }
 
-/** Uint8Array 转十六进制字符串 */
+/**
+ * Uint8Array 转小写十六进制字符串
+ * @param {Uint8Array} buf 二进制数组
+ * @returns {string} hex字符串
+ */
 function toHex(buf) {
     if (!(buf instanceof Uint8Array)) return "";
     return [...buf].map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** 十六进制字符串转 Uint8Array */
+/**
+ * 十六进制字符串转Uint8Array，自动过滤非法字符
+ * @param {string} hex 十六进制串
+ * @returns {Uint8Array}
+ */
 function hexBytes(hex) {
     const safeHex = String(hex ?? "").replace(/[^0-9a-fA-F]/g, "");
     const a = new Uint8Array(safeHex.length / 2);
@@ -44,13 +56,18 @@ function hexBytes(hex) {
     return a;
 }
 
-/** 切换下一个HOST节点 */
+/** 轮询切换下一个接口域名 */
 function nextHost() {
     HOST_INDEX = (HOST_INDEX + 1) % HOSTS.length;
     HOST = HOSTS[HOST_INDEX];
 }
 
-// ================= HMAC-SHA256 签名密钥生成 =================
+// ==================== HMAC-SHA256 密钥生成 ====================
+/**
+ * 根据requestId生成HMAC签名密钥
+ * @param {string} rid 请求唯一id
+ * @returns {Uint8Array} 密钥二进制
+ */
 async function makeKey(rid) {
     const rawKey = new TextEncoder().encode(PLATFORM_KEY);
     const key = await crypto.subtle.importKey(
@@ -65,7 +82,14 @@ async function makeKey(rid) {
     return new Uint8Array(signBuf);
 }
 
-// ================= AES-CBC 加解密 =================
+// ==================== AES-CBC 加解密 ====================
+/**
+ * AES-CBC 加密
+ * @param {Uint8Array} data 明文二进制
+ * @param {Uint8Array} key 密钥
+ * @param {Uint8Array} iv 16位向量
+ * @returns {Uint8Array} 密文
+ */
 async function aesEncrypt(data, key, iv) {
     try {
         const aesKey = await crypto.subtle.importKey(
@@ -87,6 +111,13 @@ async function aesEncrypt(data, key, iv) {
     }
 }
 
+/**
+ * AES-CBC 解密
+ * @param {Uint8Array} data 密文二进制
+ * @param {Uint8Array} key 密钥
+ * @param {Uint8Array} iv 16位向量
+ * @returns {Uint8Array} 明文
+ */
 async function aesDecrypt(data, key, iv) {
     try {
         const aesKey = await crypto.subtle.importKey(
@@ -108,7 +139,12 @@ async function aesDecrypt(data, key, iv) {
     }
 }
 
-// ================= Gzip 压缩/解压 =================
+// ==================== Gzip 压缩解压 ====================
+/**
+ * gzip 二进制压缩
+ * @param {Uint8Array} data 原始二进制
+ * @returns {Uint8Array} 压缩后数据
+ */
 async function gzipCompress(data) {
     try {
         const cs = new CompressionStream("gzip");
@@ -123,6 +159,11 @@ async function gzipCompress(data) {
     }
 }
 
+/**
+ * gzip 二进制解压
+ * @param {Uint8Array} data 压缩二进制
+ * @returns {Uint8Array} 原始数据
+ */
 async function gzipDecompress(data) {
     try {
         const ds = new DecompressionStream("gzip");
@@ -137,37 +178,44 @@ async function gzipDecompress(data) {
     }
 }
 
-// ================= 核心API请求（带HOST轮询重试） =================
+// ==================== 核心接口请求（自动轮询域名重试） ====================
+/**
+ * 调用后端加密接口
+ * @param {string} path 接口路径
+ * @param {object} data 请求参数
+ * @param {number} retry 剩余重试次数
+ * @returns {object} 接口原始JSON
+ */
 async function callApi(path, data = {}, retry = 3) {
     if (retry <= 0) throw new Error("所有节点请求全部失败");
+
     path = "/" + path.replace(/^\/+/, "");
-    // 生成请求ID
     let rid;
     try {
         rid = crypto.randomUUID();
     } catch {
-        // 低版本兼容兜底UUID
+        // 低版本运行时兼容UUID兜底
         rid = Date.now().toString(36) + Math.random().toString(36).slice(2);
     }
+
     const key = await makeKey(rid);
     const iv = crypto.getRandomValues(new Uint8Array(16));
-
-    // 组装请求原始数据
     const rawPayload = JSON.stringify({
         token: "",
         deviceId: rid.replace(/-/g, ""),
         data: data
     });
+
     const rawBuf = new TextEncoder().encode(rawPayload);
     const compressed = await gzipCompress(rawBuf);
     const encrypted = await aesEncrypt(compressed, key, iv);
 
-    // 拼接iv+密文
+    // iv(16字节) + 加密内容
     const body = new Uint8Array(16 + encrypted.length);
     body.set(iv, 0);
     body.set(encrypted, 16);
 
-    // 签名计算
+    // 签名生成
     const ts = Math.floor(Date.now() / 1000);
     const ridNoDash = rid.replace(/-/g, "");
     const signText = `Dart|${ridNoDash}|${rid}|${ts}|${path}`;
@@ -180,8 +228,8 @@ async function callApi(path, data = {}, retry = 3) {
             headers: {
                 "User-Agent": UA,
                 "Content-Type": "application/octet-stream",
-                "Origin": new URL(HOST).origin,
-                "Referer": `${HOST}/home`,
+                Origin: new URL(HOST).origin,
+                Referer: `${HOST}/home`,
                 version: VERSION,
                 deviceType: DEVICE_TYPE,
                 time: String(ts),
@@ -195,7 +243,7 @@ async function callApi(path, data = {}, retry = 3) {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const buf = new Uint8Array(await res.arrayBuffer());
 
-        // 短数据直接JSON解析（未加密）
+        // 短报文未加密，直接解析
         if (buf.length < 32) {
             try {
                 return JSON.parse(new TextDecoder().decode(buf));
@@ -204,15 +252,15 @@ async function callApi(path, data = {}, retry = 3) {
             }
         }
 
-        // 拆分iv与密文并解密
         const respIv = buf.slice(0, 16);
         const respEnc = buf.slice(16);
         let plain = await aesDecrypt(respEnc, key, respIv);
 
-        // 判断是否gzip压缩
+        // 判断gzip头 0x1f8b
         if (plain[0] === 0x1f && plain[1] === 0x8b) {
             plain = await gzipDecompress(plain);
         }
+
         return JSON.parse(new TextDecoder().decode(plain));
     } catch (err) {
         console.warn(`节点 ${HOST} 请求失败，切换节点重试，剩余重试次数:${retry - 1}`, err.message);
@@ -221,7 +269,12 @@ async function callApi(path, data = {}, retry = 3) {
     }
 }
 
-// ================= 通用列表提取工具 =================
+// ==================== 通用列表提取器 ====================
+/**
+ * 统一提取接口内数组数据，兼容 list / items / data 多层嵌套
+ * @param {any} data 接口原始返回体
+ * @returns {Array} 目标数组
+ */
 function listData(data) {
     if (Array.isArray(data)) return data;
     if (!data || typeof data !== "object") return [];
@@ -232,94 +285,71 @@ function listData(data) {
     return [];
 }
 
-// ================= 短剧标准化 Vod 对象转换 =================
+// ==================== 数据格式化 Vod 结构 ====================
+/**
+ * 首页/分类/搜索列表精简vod对象
+ * @param {object} item 单条短剧原始数据
+ * @returns {object|null} 标准化列表项
+ */
 function categoryVod(item) {
-
     item = item || {};
-
-    const vid = sid(
-        item.id ||
-        item.drama_id ||
-        ""
-    );
-
+    const vid = sid(item.id || item.drama_id || "");
     if (!vid) return null;
 
     return {
         vod_id: vid,
-        vod_name:
-            item.name ||
-            item.title ||
-            vid,
-
-        vod_pic:
-            item.img ||
-            item.cover ||
-            item.cover_url ||
-            "",
-
-        vod_remarks:
-            item.update_label ||
-            item.remark ||
-            ""
+        vod_name: item.name || item.title || vid,
+        vod_pic: item.img || item.cover || item.cover_url || "",
+        vod_remarks: item.update_label || item.remark || ""
     };
 }
 
-// 详情页
-
-function detailVod(item){
-
-    const vid=sid(
-        item.id ||
-        item.drama_id ||
-        ""
-    );
-
+/**
+ * 详情页完整vod结构（废弃，detail接口手动拼接剧集）
+ * @param {object} item 原始数据
+ * @returns {object}
+ */
+function detailVod(item) {
+    const vid = sid(item.id || item.drama_id || "");
     return {
-
-        vod_id:vid,
-
-        vod_name:
-        item.name ||
-        item.title ||
-        vid,
-
-        vod_pic:
-        item.img ||
-        item.cover ||
-        "",
-
-        vod_remarks:
-        item.update_label ||
-        "",
-
-        vod_content:
-        item.name || "",
-
-        vod_play_from:
-        "黄豆短剧",
-
-        vod_play_url:
-        `第1集$${vid}|1`
+        vod_id: vid,
+        vod_name: item.name || item.title || vid,
+        vod_pic: item.img || item.cover || "",
+        vod_remarks: item.update_label || "",
+        vod_content: item.name || "",
+        vod_play_from: "黄豆短剧",
+        vod_play_url: `第1集$${vid}|1`
     };
 }
 
-// ================= 获取分类列表 =================
+// ==================== 分类导航 ====================
+/**
+ * 获取全部一级分类
+ * @returns {Array} 分类数组
+ */
 async function getClasses() {
     const classes = [{ type_id: "all", type_name: "全部" }];
     const data = await callApi("/drama/navList", {});
     const rawList = listData(data);
+
     for (const x of rawList) {
         const id = String(x.code || x.id || x.cat_id || "");
         const name = x.name || x.title || x.cat_name || "";
         if (id && name) {
-            classes.push({ type_id: id, type_name: name });
+            classes.push({
+                type_id: id,
+                type_name: name
+            });
         }
     }
     return classes;
 }
 
-// ================= 生成筛选条件结构 =================
+/**
+ * 生成分类筛选配置（排序/更新状态）
+ * @param {Array} classes 分类列表
+ * @returns {object} 筛选结构
+ */
 async function getFilters(classes) {
     const filters = {};
     const filterTemplate = [
@@ -342,27 +372,42 @@ async function getFilters(classes) {
             ]
         }
     ];
+
     for (const c of classes) {
         filters[c.type_id] = JSON.parse(JSON.stringify(filterTemplate));
     }
     return filters;
 }
 
-// ================= 子分类缓存 =================
+/** 子分类缓存 */
 const navCache = {};
+/**
+ * 获取指定分类下二级子筛选
+ * @param {string} code 一级分类id
+ * @returns {Array} 子分类列表
+ */
 async function getNavFilter(code) {
     if (!code || code === "all") return [];
     if (navCache[code]) return navCache[code];
+
     const data = await callApi("/drama/navFilter", { code: String(code) });
     const result = listData(data);
     navCache[code] = result;
     return result;
 }
 
-// ================= 首页数据 =================
+// ==================== 页面接口实现 ====================
+/**
+ * 首页数据
+ * @returns {object} OK影视标准首页结构
+ */
 async function homeContent() {
-    const data = await callApi("/drama/list", { page: "1", page_size: String(PAGE_SIZE) });
+    const data = await callApi("/drama/list", {
+        page: "1",
+        page_size: String(PAGE_SIZE)
+    });
     const classes = await getClasses();
+
     return {
         class: classes,
         filters: await getFilters(classes),
@@ -372,7 +417,13 @@ async function homeContent() {
     };
 }
 
-// ================= 分类列表（修复原pagecount语法错误） =================
+/**
+ * 分类列表分页数据
+ * @param {string} tid 分类id
+ * @param {string} pg 页码
+ * @param {object} extend 扩展筛选参数 sub/order/update_status
+ * @returns {object} 标准分页结构
+ */
 async function categoryContent(tid, pg, extend = {}) {
     const page = String(pg || "1");
     const req = {
@@ -390,15 +441,14 @@ async function categoryContent(tid, pg, extend = {}) {
             if (f.tag_id) req.tag_id = String(f.tag_id);
         }
     }
+
     if (extend.order) req.order = extend.order;
     if (extend.update_status) req.update_status = extend.update_status;
 
     const data = await callApi("/drama/list", req);
     const rawItems = listData(data);
-    // 过滤无效条目
     const items = rawItems.filter(x => (x.id || x.drama_id || x.name || x.title));
     const pageNum = Number(page);
-    // 模拟分页，真实项目可后端返回total替换99999
     const total = 99999;
     const pagecount = Math.ceil(total / PAGE_SIZE);
 
@@ -414,16 +464,22 @@ async function categoryContent(tid, pg, extend = {}) {
     };
 }
 
-// ================= 详情接口 =================
+/**
+ * 短剧详情+剧集列表
+ * @param {string[]} ids 短剧id数组（仅取第一个）
+ * @returns {object} OK影视详情结构
+ */
 async function detailContent(ids) {
     const vid = sid(ids?.[0] ?? "");
     if (!vid) return { list: [] };
+
     const data = await callApi("/drama/detail", { id: vid });
     const d = data.data || data;
     if (!d || typeof d !== "object") return { list: [] };
 
     const episodes = Array.isArray(d.episodes) ? d.episodes : [];
     const play = [];
+
     if (episodes.length > 0) {
         for (let i = 0; i < episodes.length; i++) {
             const ep = episodes[i];
@@ -455,7 +511,12 @@ async function detailContent(ids) {
     };
 }
 
-// ================= 搜索接口 =================
+/**
+ * 搜索分页列表
+ * @param {string} key 搜索关键词
+ * @param {string} pg 页码
+ * @returns {object} 分页结构
+ */
 async function searchContent(key, pg) {
     const page = String(pg || "1");
     const data = await callApi("/drama/list", {
@@ -478,7 +539,11 @@ async function searchContent(key, pg) {
     };
 }
 
-// ================= 播放地址接口 =================
+/**
+ * 获取播放代理地址
+ * @param {string} id 剧集标识 vid|seq
+ * @returns {object} 播放返回体
+ */
 async function playerContent(id) {
     const arr = String(id ?? "").split("|");
     const vid = sid(arr[0]);
@@ -486,12 +551,16 @@ async function playerContent(id) {
     let playUrl = "";
 
     try {
-        const data = await callApi("/drama/play", { id: vid, seq: String(seq) });
+        const data = await callApi("/drama/play", {
+            id: vid,
+            seq: String(seq)
+        });
         const d = data.data || {};
         playUrl = d.m3u8 || d.url || "";
     } catch (err) {
         console.warn("获取直链失败，使用兜底路由:", err.message);
     }
+
     if (!playUrl) {
         playUrl = `${HOST}/api/drama/hls/${vid}/${seq}/play.m3u8`;
     }
@@ -510,10 +579,11 @@ async function playerContent(id) {
     };
 }
 
-// ================= CF Pages Worker 入口 =================
+// ==================== CF Pages Worker 入口函数 ====================
 export async function onRequest(context) {
     const request = context.request;
     const url = new URL(request.url);
+    /** 快速获取url参数，空兜底 */
     const getParam = (k) => url.searchParams.get(k) ?? "";
 
     const ac = getParam("ac");
@@ -555,6 +625,7 @@ export async function onRequest(context) {
                     result = await homeContent();
                 }
         }
+
         return new Response(JSON.stringify(result), {
             headers: {
                 "Content-Type": "application/json;charset=utf-8",
@@ -562,7 +633,6 @@ export async function onRequest(context) {
             }
         });
     } catch (e) {
-        // 移除stack堆栈，避免泄露内部代码
         return new Response(JSON.stringify({ error: e.message }), {
             status: 500,
             headers: {
