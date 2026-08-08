@@ -553,18 +553,43 @@ async function searchContent(key, pg) {
  * @returns {object} 播放返回体
  */
 async function playerContent(id, base) {
-    // ... 前面不变，拿到 playUrl 后：
-    const proxy = `${base}/proxy?url=${encodeURIComponent(playUrl)}`;
+    const arr = String(id ?? "").split("|");
+    const vid = sid(arr[0]);
+    const seq = arr[1] || "1";
+    let mediaUrl = "";
+
+    try {
+        const data = await callApi("/drama/play", {
+            id: vid,
+            seq: String(seq)
+        });
+        const d = data.data || {};
+        mediaUrl = d.m3u8 || d.url || "";
+    } catch (err) {
+        console.warn("获取直链失败，使用兜底路由:", err.message);
+    }
+
+    if (!mediaUrl) {
+        mediaUrl = `${HOST}/api/drama/hls/${vid}/${seq}/play.m3u8?line=free`;
+    }
+
+    // 必须是完整 https 地址，相对路径 /proxy 在播放器里经常无效
+    const origin = base || "";
+    const playUrl = origin
+        ? `${origin}/proxy?url=${encodeURIComponent(mediaUrl)}`
+        : `/proxy?url=${encodeURIComponent(mediaUrl)}`;
+
     return {
         parse: 0,
         jx: 0,
-        url: proxy,
+        url: playUrl,
         playUrl: "",
         header: {
             "User-Agent": UA,
             Referer: `${HOST}/home`,
             Origin: new URL(HOST).origin
-        }
+        },
+        format: "application/x-mpegURL"
     };
 }
 
@@ -611,6 +636,43 @@ export async function onRequest(context) {
     if (!ac) {
         if (wd) ac = "search";
         else if (ids) ac = "detail";
+        else if (tid) ac = "category";
+        else ac = "home";
+    }
+    
+        let ac = getParam("ac") || getParam("action");
+    const tid = getParam("tid") || getParam("t") || getParam("type") || getParam("class");
+    const pg = getParam("pg") || getParam("page") || "1";
+    const wd = getParam("wd") || getParam("key") || getParam("keywords");
+    const ids = getParam("ids");
+    const playId = getParam("id") || getParam("play") || "";
+    const flag = getParam("flag") || "";
+
+    // 解析 ext ...
+    // （保持你现有的 ext / detail→category 逻辑）
+
+    // ★ 播放识别：id 形如 vid|集数，或带 flag
+    if (
+        (!ac || ac === "play") &&
+        playId &&
+        (String(playId).includes("|") || flag)
+    ) {
+        ac = "play";
+    }
+
+    // ★ 点分类误发 detail 的兼容（你已有的话保留）
+    if (ac === "detail" && tid && !ids) {
+        ac = "category";
+    }
+
+    if (ac === "list") {
+        ac = (!tid || tid === "all" || tid === "recommend") ? "home" : "category";
+    }
+
+    if (!ac) {
+        if (wd) ac = "search";
+        else if (ids) ac = "detail";
+        else if (playId && String(playId).includes("|")) ac = "play";
         else if (tid) ac = "category";
         else ac = "home";
     }
