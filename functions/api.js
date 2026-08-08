@@ -235,7 +235,7 @@ async function homeContent(base, sessionId) {
   );
   const classes = await getClasses(sessionId);
   return {
-    class: classes,
+    class: classes, // 关键：不能缺
     list: listData(data).map((x) => toVod(x, base)),
     parse: 0,
     jx: 0,
@@ -478,16 +478,41 @@ export async function onRequest(context) {
     else if (tid || url.searchParams.has("filter")) ac = "category";
     else ac = "home";
   }
-  if (ac === "list") ac = "category";
+   if (ac === "list") {
+    // 不要在这里直接改成 category！交给 switch 处理
+  }
 
   const sessionId = uuidHex();
 
-  try {
+   try {
     let result;
     switch (ac) {
       case "home":
+        // 首页：必须带 class，应用才有分类栏
         result = await homeContent(base, sessionId);
         break;
+
+      case "list":
+        // 很多壳用 ac=list
+        // 没有 tid / tid=all → 当首页（返回 class + list）
+        // 有具体 tid → 当分类
+        if (!tid || tid === "all" || tid === "recommend") {
+          result = await homeContent(base, sessionId);
+        } else {
+          result = await categoryContent(
+            tid,
+            pg,
+            {
+              order: url.searchParams.get("order") || "",
+              update_status: url.searchParams.get("update_status") || "",
+              sub: url.searchParams.get("sub") || "",
+            },
+            base,
+            sessionId
+          );
+        }
+        break;
+
       case "category":
         result = await categoryContent(
           tid || "all",
@@ -501,6 +526,7 @@ export async function onRequest(context) {
           sessionId
         );
         break;
+
       case "detail":
         result = await detailContent(
           String(ids || playId).split(","),
@@ -508,12 +534,15 @@ export async function onRequest(context) {
           sessionId
         );
         break;
+
       case "search":
         result = await searchContent(wd, pg, base, sessionId);
         break;
+
       case "play":
         result = await playerContent(playId || ids, base, sessionId);
         break;
+
       default:
         result = { error: "unknown action", ac };
     }
@@ -533,4 +562,3 @@ export async function onRequest(context) {
       },
     });
   }
-}
