@@ -3,12 +3,11 @@ const HOST = "https://eyeonneb.cc";
 const API = HOST + "/api";
 const PLATFORM_KEY = "7961beb44246e3012ce228d6b5ced05a";
 const VERSION = "2.0.0";
-const DEVICE_TYPE = "web"; // 必须 web，android/ios 会返回 2001
+const DEVICE_TYPE = "web";
 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-// ==================== 工具 ====================
 function uuidHex() {
   return crypto.randomUUID().replace(/-/g, "");
 }
@@ -43,7 +42,6 @@ async function hmacSha256(keyStr, dataBytes) {
 }
 
 async function aesCbcEncrypt(data, key, iv) {
-  // Web Crypto 自动 PKCS7，不要手动 pad
   const cryptoKey = await crypto.subtle.importKey(
     "raw",
     key,
@@ -85,7 +83,6 @@ async function gzipDecompress(data) {
   return new Uint8Array(await new Response(stream.readable).arrayBuffer());
 }
 
-// ==================== 请求源站 ====================
 async function callApi(path, data = {}, sessionId) {
   path = "/" + String(path).replace(/^\//, "");
   const rid = uuidWithDash();
@@ -153,7 +150,6 @@ async function callApi(path, data = {}, sessionId) {
   return JSON.parse(new TextDecoder().decode(plain));
 }
 
-// ==================== 数据转换 ====================
 function listData(data) {
   if (Array.isArray(data)) return data;
   if (!data || typeof data !== "object") return [];
@@ -201,9 +197,9 @@ async function getClasses(sessionId) {
   try {
     const data = await callApi("/drama/navList", {}, sessionId);
     for (const item of listData(data)) {
-      const tid = String(item.code || item.id || item.cat_id || "");
-      const name = item.name || item.title || tid;
-      if (tid && name) arr.push({ type_id: tid, type_name: name });
+      const id = String(item.code || item.id || item.cat_id || "");
+      const name = item.name || item.title || id;
+      if (id && name) arr.push({ type_id: id, type_name: name });
     }
   } catch (_) {}
   return arr;
@@ -226,7 +222,6 @@ async function getNavFilter(code, sessionId) {
   }
 }
 
-// ==================== 业务 ====================
 async function homeContent(base, sessionId) {
   const data = await callApi(
     "/drama/list",
@@ -235,7 +230,7 @@ async function homeContent(base, sessionId) {
   );
   const classes = await getClasses(sessionId);
   return {
-    class: classes, // 关键：不能缺
+    class: classes,
     list: listData(data).map((x) => toVod(x, base)),
     parse: 0,
     jx: 0,
@@ -248,7 +243,6 @@ async function categoryContent(tid, pg, extend, base, sessionId) {
   const typeId = String(tid || "all");
 
   if (typeId === "yuandou") {
-    // 原脚本：黄豆原创走 navBlock
     const data = await callApi(
       "/drama/navBlock",
       { code: "yuandou", tab: "recommend", page },
@@ -263,8 +257,6 @@ async function categoryContent(tid, pg, extend, base, sessionId) {
     const req = { page, page_size: "18" };
 
     if (typeId && typeId !== "all" && typeId !== "recommend") {
-      // 关键：不能直接 cat_id = tid
-      // 要先 navFilter，再用子分类里的 filter
       const tabs = await getNavFilter(typeId, sessionId);
       let idx = 0;
       if (extend && extend.sub !== undefined && extend.sub !== "") {
@@ -274,7 +266,10 @@ async function categoryContent(tid, pg, extend, base, sessionId) {
       const sub =
         tabs && tabs.length && idx >= 0 && idx < tabs.length ? tabs[idx] : null;
       const flt =
-        sub && typeof sub === "object" && sub.filter && typeof sub.filter === "object"
+        sub &&
+        typeof sub === "object" &&
+        sub.filter &&
+        typeof sub.filter === "object"
           ? sub.filter
           : {};
 
@@ -282,9 +277,7 @@ async function categoryContent(tid, pg, extend, base, sessionId) {
       if (flt.tag_id) req.tag_id = String(flt.tag_id);
       if (flt.order) req.order = String(flt.order);
 
-      // 若 filter 里什么都没有，尝试把 code 传给其它可能字段（兜底）
       if (!req.cat_id && !req.tag_id) {
-        // 部分导航可能直接用 code 列表接口
         const data2 = await callApi(
           "/drama/navBlock",
           { code: typeId, tab: "recommend", page },
@@ -299,9 +292,10 @@ async function categoryContent(tid, pg, extend, base, sessionId) {
     }
 
     if (extend && extend.order) req.order = extend.order;
-    if (extend && extend.update_status) req.update_status = extend.update_status;
+    if (extend && extend.update_status) {
+      req.update_status = extend.update_status;
+    }
 
-    // 只有在还没通过 navBlock 拿到 items 时，才走 /drama/list
     if (!items.length) {
       const data = await callApi("/drama/list", req, sessionId);
       items = listData(data);
@@ -417,7 +411,7 @@ async function playerContent(id, base, sessionId) {
   const realVid = sid(parts[0]);
   const realSeq = parts[1] || "1";
 
-  let url = "";
+  let mediaUrl = "";
   try {
     const obj = await callApi(
       "/drama/play",
@@ -425,25 +419,22 @@ async function playerContent(id, base, sessionId) {
       sessionId
     );
     const d = (obj && obj.data) || {};
-    url = d.m3u8 || d.url || "";
+    mediaUrl = d.m3u8 || d.url || "";
   } catch (_) {}
 
-  if (!url) {
-    url = `${HOST}/api/drama/hls/${realVid}/${realSeq}/play.m3u8?line=free`;
+  if (!mediaUrl) {
+    mediaUrl = `${HOST}/api/drama/hls/${realVid}/${realSeq}/play.m3u8?line=free`;
   }
-
-  const playUrl = proxyUrl(base, url);
 
   return {
     parse: 0,
     playUrl: "",
-    url: playUrl,
+    url: proxyUrl(base, mediaUrl),
     jx: 0,
     format: "application/x-mpegURL",
   };
 }
 
-// ==================== 入口 ====================
 export async function onRequest(context) {
   const { request } = context;
   const url = new URL(request.url);
@@ -457,9 +448,7 @@ export async function onRequest(context) {
     url.searchParams.get("class") ||
     "";
   const pg =
-    url.searchParams.get("pg") ||
-    url.searchParams.get("page") ||
-    "1";
+    url.searchParams.get("pg") || url.searchParams.get("page") || "1";
   const wd =
     url.searchParams.get("wd") ||
     url.searchParams.get("key") ||
@@ -467,35 +456,29 @@ export async function onRequest(context) {
     "";
   const ids = url.searchParams.get("ids") || "";
   const playId =
-    url.searchParams.get("play") ||
-    url.searchParams.get("id") ||
-    "";
+    url.searchParams.get("play") || url.searchParams.get("id") || "";
 
-  // 无 ac 时根据参数推断
   if (!ac) {
     if (wd) ac = "search";
     else if (ids) ac = "detail";
-    else if (tid || url.searchParams.has("filter")) ac = "category";
+    else if (tid) ac = "category";
     else ac = "home";
   }
-   if (ac === "list") {
-    // 不要在这里直接改成 category！交给 switch 处理
-  }
 
+  // 注意：不要把 list 强行改成 category
   const sessionId = uuidHex();
 
-   try {
+  try {
     let result;
+
     switch (ac) {
       case "home":
-        // 首页：必须带 class，应用才有分类栏
         result = await homeContent(base, sessionId);
         break;
 
       case "list":
-        // 很多壳用 ac=list
-        // 没有 tid / tid=all → 当首页（返回 class + list）
-        // 有具体 tid → 当分类
+        // 无具体分类 → 首页（必须带 class）
+        // 有具体分类 → 分类列表
         if (!tid || tid === "all" || tid === "recommend") {
           result = await homeContent(base, sessionId);
         } else {
@@ -544,7 +527,9 @@ export async function onRequest(context) {
         break;
 
       default:
-        result = { error: "unknown action", ac };
+        // 未知 ac 也尽量回首页，避免应用拿不到 class
+        result = await homeContent(base, sessionId);
+        break;
     }
 
     return new Response(JSON.stringify(result), {
@@ -562,3 +547,4 @@ export async function onRequest(context) {
       },
     });
   }
+}
