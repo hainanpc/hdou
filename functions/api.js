@@ -186,7 +186,7 @@ function toVod(item, base) {
     vod_name: item.name || item.title || item.t || vid,
     vod_pic: proxyUrl(
       base,
-      item.img_x || item.img || item.img_y || item.cover || item.pic || ""
+      item.img_y || item.img_x || item.img || item.cover || item.pic || ""
     ),
     vod_remarks: remarks,
   };
@@ -196,7 +196,8 @@ async function getClasses(sessionId) {
   const arr = [{ type_id: "all", type_name: "全部短剧" }];
   try {
     const data = await callApi("/drama/navList", {}, sessionId);
-    for (const item of listData(data)) {
+    const rawList = listData(data.data || data);
+    for (const item of rawList) {
       const id = String(item.code || item.id || item.cat_id || "");
       const name = item.name || item.title || id;
       if (id && name) arr.push({ type_id: id, type_name: name });
@@ -213,7 +214,7 @@ async function getNavFilter(code, sessionId) {
   if (filterCache.has(key)) return filterCache.get(key);
   try {
     const data = await callApi("/drama/navFilter", { code: key }, sessionId);
-    const tabs = listData(data);
+    const tabs = listData(data.data || data);
     filterCache.set(key, tabs);
     return tabs;
   } catch (_) {
@@ -242,56 +243,46 @@ async function categoryContent(tid, pg, extend, base, sessionId) {
   const page = String(pg || "1");
   const typeId = String(tid || "all");
 
-  const req = { page, page_size: "18" };
-
-  if (typeId && typeId !== "all" && typeId !== "recommend") {
-    // 1. 尝试获取分类的子筛选
-    const tabs = await getNavFilter(typeId, sessionId);
-    let idx = 0;
-    if (extend && extend.sub !== undefined && extend.sub !== "") {
-      idx = parseInt(extend.sub, 10);
-      if (Number.isNaN(idx)) idx = 0;
+  if (typeId === "yuandou") {
+    const data = await callApi(
+      "/drama/navBlock",
+      { code: "yuandou", tab: "recommend", page },
+      sessionId
+    );
+    const blocks = listData(data.data || data);
+    for (const b of blocks) {
+      if (b && Array.isArray(b.items)) items = items.concat(b.items);
+      else if (b && (b.id || b.drama_id)) items.push(b);
     }
-    const sub =
-      tabs && tabs.length && idx >= 0 && idx < tabs.length ? tabs[idx] : null;
-    const flt =
-      sub && typeof sub === "object" && sub.filter && typeof sub.filter === "object"
-        ? sub.filter
-        : {};
-
-    if (flt.cat_id) req.cat_id = String(flt.cat_id);
-    if (flt.tag_id) req.tag_id = String(flt.tag_id);
-    if (flt.order) req.order = String(flt.order);
-
-    // 2. 如果筛选里没有 cat_id/tag_id，直接将当前分类 ID 赋值给 cat_id 兜底请求 /drama/list
-    if (!req.cat_id && !req.tag_id) {
-      req.cat_id = typeId;
-    }
-  }
-
-  if (extend && extend.order) req.order = extend.order;
-  if (extend && extend.update_status) {
-    req.update_status = extend.update_status;
-  }
-
-  // 3. 请求 /drama/list 获取对应分类数据
-  const data = await callApi("/drama/list", req, sessionId);
-  items = listData(data);
-
-  // 4. 如果 /drama/list 拿不到，再尝试备用的 navBlock 接口
-  if (!items.length && typeId && typeId !== "all" && typeId !== "recommend") {
-    try {
-      const data2 = await callApi(
-        "/drama/navBlock",
-        { code: typeId, tab: "recommend", page },
-        sessionId
-      );
-      const blocks2 = listData(data2);
-      for (const b of blocks2) {
-        if (b && Array.isArray(b.items)) items = items.concat(b.items);
-        else if (b && (b.id || b.drama_id)) items.push(b);
+  } else {
+    const req = { page, page_size: "18" };
+    if (typeId && typeId !== "all" && typeId !== "recommend") {
+      const tabs = await getNavFilter(typeId, sessionId);
+      let idx = 0;
+      if (extend && extend.sub !== undefined && extend.sub !== "") {
+        idx = parseInt(extend.sub, 10);
+        if (Number.isNaN(idx)) idx = 0;
       }
-    } catch (_) {}
+      const sub =
+        tabs && tabs.length && idx >= 0 && idx < tabs.length ? tabs[idx] : null;
+      const flt =
+        sub && typeof sub === "object" && sub.filter && typeof sub.filter === "object"
+          ? sub.filter
+          : {};
+
+      if (flt.cat_id) req.cat_id = String(flt.cat_id);
+      if (flt.tag_id) req.tag_id = String(flt.tag_id);
+      req.order = flt.order || (extend && extend.order) || "";
+    } else {
+      if (extend && extend.order) req.order = extend.order;
+    }
+
+    if (extend && extend.update_status) {
+      req.update_status = extend.update_status;
+    }
+
+    const data = await callApi("/drama/list", req, sessionId);
+    items = listData(data);
   }
 
   return {
@@ -361,7 +352,7 @@ async function detailContent(ids, base, sessionId) {
         vod_name: name,
         vod_pic: proxyUrl(
           base,
-          data.img_x || data.img || data.img_y || data.cover || data.pic || ""
+          data.img_y || data.img_x || data.img || data.cover || data.pic || ""
         ),
         type_name: data.category || data.type || "",
         vod_year: "",
@@ -453,41 +444,19 @@ export async function onRequest(context) {
   if (!ac) {
     if (wd) ac = "search";
     else if (ids) ac = "detail";
-    else if (tid) ac = "category";
+    else if (tid && tid !== "all") ac = "category";
     else ac = "home";
   }
 
-  // 注意：不要把 list 强行改成 category
   const sessionId = uuidHex();
 
   try {
     let result;
-
     switch (ac) {
       case "home":
         result = await homeContent(base, sessionId);
         break;
-
       case "list":
-        // 无具体分类 → 首页（必须带 class）
-        // 有具体分类 → 分类列表
-        if (!tid || tid === "all" || tid === "recommend") {
-          result = await homeContent(base, sessionId);
-        } else {
-          result = await categoryContent(
-            tid,
-            pg,
-            {
-              order: url.searchParams.get("order") || "",
-              update_status: url.searchParams.get("update_status") || "",
-              sub: url.searchParams.get("sub") || "",
-            },
-            base,
-            sessionId
-          );
-        }
-        break;
-
       case "category":
         result = await categoryContent(
           tid || "all",
@@ -501,7 +470,6 @@ export async function onRequest(context) {
           sessionId
         );
         break;
-
       case "detail":
         result = await detailContent(
           String(ids || playId).split(","),
@@ -509,19 +477,14 @@ export async function onRequest(context) {
           sessionId
         );
         break;
-
       case "search":
         result = await searchContent(wd, pg, base, sessionId);
         break;
-
       case "play":
         result = await playerContent(playId || ids, base, sessionId);
         break;
-
       default:
-        // 未知 ac 也尽量回首页，避免应用拿不到 class
         result = await homeContent(base, sessionId);
-        break;
     }
 
     return new Response(JSON.stringify(result), {
