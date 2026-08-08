@@ -445,7 +445,7 @@ item=item||{};
 
 
 let vid=
-sid(
+String(
 item.id||
 item.drama_id||
 ""
@@ -456,7 +456,6 @@ return {
 
 vod_id:vid,
 
-
 vod_name:
 item.name||
 item.title||
@@ -465,22 +464,32 @@ vid,
 
 
 vod_pic:
-item.img_y||
-item.img_x||
 item.img||
 item.cover||
-item.pic||
+item.cover_url||
 "",
 
 
 vod_remarks:
 item.update_label||
-item.corner||
-(
-item.episode_count?
-"全"+item.episode_count+"集":
-""
-)
+item.remark||
+"",
+
+
+vod_content:
+item.name||
+"",
+
+
+vod_actor:"",
+
+vod_director:"",
+
+vod_year:"",
+
+vod_area:"",
+
+type_name:"黄豆短剧"
 
 };
 
@@ -871,29 +880,23 @@ async function categoryContent(
 
 	return {
 
+page:Number(page),
 
-		page: Number(page),
+pagecount:...,
 
+limit:18,
 
-		pagecount: items.length >= 18 ?
-			Number(page) + 1 : Number(page),
+total:99999,
 
+list:items.map(vod),
 
-		limit: 18,
+class_name:"黄豆短剧",
 
+parse:0,
 
-		total: 99999,
+jx:0
 
-
-		list: items.map(vod),
-
-
-		parse: 0,
-
-		jx: 0
-
-
-	};
+};
 
 
 }
