@@ -424,50 +424,38 @@ async function homeContent() {
  * @param {object} extend 扩展筛选参数 sub/order/update_status
  * @returns {object} 标准分页结构
  */
-async function categoryContent(tid, pg, extend = {}) {
-	console.log(
-"category tid=",
-tid,
-"page=",
-page
-);
-	
-    const page = String(pg || "1");
-    const req = {
-        page: page,
-        page_size: String(PAGE_SIZE)
-    };
+async function categoryContent(tid, page, extend = {}) {
+
     const typeId = String(tid || "all");
 
+    const req = {
+        page: String(page),
+        page_size: String(PAGE_SIZE)
+    };
+
+
     if (typeId !== "all") {
-        const tabs = await getNavFilter(typeId);
-        const subIdx = Number(extend.sub || 0);
-        if (tabs[subIdx]) {
-            const f = tabs[subIdx].filter || tabs[subIdx];
-            if (f.cat_id) req.cat_id = String(f.cat_id);
-            if (f.tag_id) req.tag_id = String(f.tag_id);
-        }
+        req.cat_id = typeId;
     }
 
-    if (extend.order) req.order = extend.order;
-    if (extend.update_status) req.update_status = extend.update_status;
 
-    const data = await callApi("/drama/list", req);
-    const rawItems = listData(data);
-    const items = rawItems.filter(x => (x.id || x.drama_id || x.name || x.title));
-    const pageNum = Number(page);
-    const total = 99999;
-    const pagecount = Math.ceil(total / PAGE_SIZE);
+    const data = await callApi(
+        "/drama/list",
+        req
+    );
+
+
+    const items = listData(data);
+
 
     return {
-        page: pageNum,
-        pagecount: pagecount,
+        page: Number(page),
+        pagecount: 5556,
         limit: PAGE_SIZE,
-        total: total,
+        total: 99999,
         list: items.map(categoryVod).filter(Boolean),
-        class_name: "黄豆短剧",
-        parse: 0,
-        jx: 0
+        parse:0,
+        jx:0
     };
 }
 
