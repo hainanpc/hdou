@@ -424,36 +424,49 @@ async function homeContent() {
  * @param {object} extend 扩展筛选参数 sub/order/update_status
  * @returns {object} 标准分页结构
  */
-async function categoryContent(tid, page, extend = {}) {
+async function categoryContent(tid,page,extend={}){
 
     const typeId = String(tid || "all");
 
-    const req = {
-        page: String(page),
-        page_size: String(PAGE_SIZE)
+    let req={
+        page:String(page),
+        page_size:String(PAGE_SIZE)
     };
 
 
-    if (typeId !== "all") {
-        req.cat_id = typeId;
+    if(typeId !== "all"){
+
+        const tabs = await getNavFilter(typeId);
+
+        const subIdx = Number(extend.sub || 0);
+
+        if(tabs[subIdx]){
+
+            const f=tabs[subIdx].filter || tabs[subIdx];
+
+            if(f.cat_id){
+                req.cat_id=String(f.cat_id);
+            }
+
+            if(f.tag_id){
+                req.tag_id=String(f.tag_id);
+            }
+        }
+
     }
 
 
-    const data = await callApi(
-        "/drama/list",
-        req
-    );
-
-
-    const items = listData(data);
+    const data=await callApi("/drama/list",req);
 
 
     return {
-        page: Number(page),
-        pagecount: 5556,
-        limit: PAGE_SIZE,
-        total: 99999,
-        list: items.map(categoryVod).filter(Boolean),
+        page:Number(page),
+        pagecount:5556,
+        limit:PAGE_SIZE,
+        total:99999,
+        list:listData(data)
+            .map(categoryVod)
+            .filter(Boolean),
         parse:0,
         jx:0
     };
