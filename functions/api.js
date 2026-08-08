@@ -556,6 +556,7 @@ async function playerContent(id, base) {
     const arr = String(id ?? "").split("|");
     const vid = sid(arr[0]);
     const seq = arr[1] || "1";
+
     let mediaUrl = "";
 
     try {
@@ -573,16 +574,16 @@ async function playerContent(id, base) {
         mediaUrl = `${HOST}/api/drama/hls/${vid}/${seq}/play.m3u8?line=free`;
     }
 
-    // 必须是完整 https 地址，相对路径 /proxy 在播放器里经常无效
+    // 注意：变量名要统一，不要混用 playUrl / proxyUrl
     const origin = base || "";
-    const playUrl = origin
+    const finalUrl = origin
         ? `${origin}/proxy?url=${encodeURIComponent(mediaUrl)}`
         : `/proxy?url=${encodeURIComponent(mediaUrl)}`;
 
     return {
         parse: 0,
         jx: 0,
-        url: playUrl,
+        url: finalUrl,
         playUrl: "",
         header: {
             "User-Agent": UA,
