@@ -245,23 +245,16 @@ async function categoryContent(tid, pg, extend, base, sessionId) {
 
   try {
     if (typeId === "all" || !typeId || typeId === "recommend") {
-      const req = { page, page_size: "18" };
-      if (extend && extend.order) req.order = extend.order;
-      if (extend && extend.update_status) req.update_status = extend.update_status;
-      
-      const data = await callApi("/drama/list", req, sessionId);
+      const data = await callApi("/drama/list", { page, page_size: "18" }, sessionId);
       items = listData(data);
-    } else if (typeId === "yuandou" || typeId === "aiman" || typeId === "erciyuan" || typeId === "caibian" || typeId === "zhenren" || typeId === "zongyi" || typeId === "heiliao" || typeId === "chuanmei") {
-      // 针对所有独立专区，优先请求 navBlock，若为空则降级走 list 过滤
-      let blockData = null;
-      try {
-        blockData = await callApi(
-          "/drama/navBlock",
-          { code: typeId, tab: "recommend", page },
-          sessionId
-        );
-      } catch (_) {}
-
+    } else {
+      // 核心：所有非“全部”的分类（包括 yuandou、aiman 等），直接走你在浏览器测试成功的 navBlock 逻辑
+      let blockData = await callApi(
+        "/drama/navBlock",
+        { code: typeId, tab: "recommend", page },
+        sessionId
+      );
+      
       let blocks = listData(blockData);
       if (!blocks.length && blockData && typeof blockData === "object") {
         if (blockData.data) blocks = listData(blockData.data);
@@ -277,38 +270,17 @@ async function categoryContent(tid, pg, extend, base, sessionId) {
         }
       }
 
-      // 如果 navBlock 没有拉到数据，兜底尝试带 code/cat_id 走标准 list 接口
+      // 如果 navBlock 没拿到，降级用 list 带 code 查询
       if (!items.length) {
-        const req = { page, page_size: "18", code: typeId };
-        const data = await callApi("/drama/list", req, sessionId);
-        items = listData(data);
+        const dataFallback = await callApi(
+          "/drama/list",
+          { page, page_size: "18", code: typeId },
+          sessionId
+        );
+        items = listData(dataFallback);
       }
-    } else {
-      const req = { page, page_size: "18", code: typeId };
-      const tabs = await getNavFilter(typeId, sessionId);
-      let idx = 0;
-      if (extend && extend.sub !== undefined && extend.sub !== "") {
-        idx = parseInt(extend.sub, 10);
-        if (Number.isNaN(idx)) idx = 0;
-      }
-      const sub = tabs && tabs.length && idx >= 0 && idx < tabs.length ? tabs[idx] : null;
-      const flt =
-        sub && typeof sub === "object" && sub.filter && typeof sub.filter === "object"
-          ? sub.filter
-          : {};
-
-      if (flt.cat_id) req.cat_id = String(flt.cat_id);
-      if (flt.tag_id) req.tag_id = String(flt.tag_id);
-      req.order = flt.order || (extend && extend.order) || "";
-
-      if (extend && extend.update_status) {
-        req.update_status = extend.update_status;
-      }
-
-      const data = await callApi("/drama/list", req, sessionId);
-      items = listData(data);
     }
-  } catch (e) {
+  } catch (_) {
     items = [];
   }
 
