@@ -397,18 +397,23 @@ export async function onRequest(context) {
         result = await homeContent(base, sessionId);
         break;
       case "category":
-        result = await categoryContent(
-          url.searchParams.get("tid") || "all",
-          url.searchParams.get("pg") || "1",
-          {
-            order: url.searchParams.get("order"),
-            update_status: url.searchParams.get("update_status"),
-            sub: url.searchParams.get("sub"),
-          },
-          base,
-          sessionId
-        );
-        break;
+  result = await categoryContent(
+    // OK影视 / TVBox 可能用 tid / t / type / class
+    url.searchParams.get("tid") ||
+      url.searchParams.get("t") ||
+      url.searchParams.get("type") ||
+      url.searchParams.get("class") ||
+      "all",
+    url.searchParams.get("pg") || url.searchParams.get("page") || "1",
+    {
+      order: url.searchParams.get("order"),
+      update_status: url.searchParams.get("update_status"),
+      sub: url.searchParams.get("sub"),
+    },
+    base,
+    sessionId
+  );
+  break;
       case "detail":
         result = await detailContent(
           (url.searchParams.get("ids") || "").split(","),
