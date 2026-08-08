@@ -601,13 +601,21 @@ export async function onRequest(context) {
     const getParam = (k) => url.searchParams.get(k) ?? "";
 
     let ac = getParam("ac") || getParam("action");
-    const tid = getParam("tid") || getParam("t") || getParam("type") || getParam("class");
+    const tid =
+        getParam("tid") ||
+        getParam("t") ||
+        getParam("type") ||
+        getParam("class");
     const pg = getParam("pg") || getParam("page") || "1";
-    const wd = getParam("wd") || getParam("key") || getParam("keywords");
+    const wd =
+        getParam("wd") ||
+        getParam("key") ||
+        getParam("keywords");
     const ids = getParam("ids");
-    const playId = getParam("id") || getParam("play");
+    const playId = getParam("id") || getParam("play") || "";
+    const flag = getParam("flag") || "";
 
-    // 解析 ext（OK影视 base64 的 extend）
+    // 解析 ext
     let extend = {
         sub: getParam("sub"),
         order: getParam("order"),
@@ -624,35 +632,7 @@ export async function onRequest(context) {
         } catch (_) {}
     }
 
-    // ★ 关键：点分类时壳会发 ac=detail&t=分类id&pg=1（没有 ids）
-    // 这种请求必须当 category，不能当详情
-    if (ac === "detail" && tid && !ids) {
-        ac = "category";
-    }
-    // 兼容 ac=list
-    if (ac === "list") {
-        ac = (!tid || tid === "all" || tid === "recommend") ? "home" : "category";
-    }
-
-    if (!ac) {
-        if (wd) ac = "search";
-        else if (ids) ac = "detail";
-        else if (tid) ac = "category";
-        else ac = "home";
-    }
-    
-        let ac = getParam("ac") || getParam("action");
-    const tid = getParam("tid") || getParam("t") || getParam("type") || getParam("class");
-    const pg = getParam("pg") || getParam("page") || "1";
-    const wd = getParam("wd") || getParam("key") || getParam("keywords");
-    const ids = getParam("ids");
-    const playId = getParam("id") || getParam("play") || "";
-    const flag = getParam("flag") || "";
-
-    // 解析 ext ...
-    // （保持你现有的 ext / detail→category 逻辑）
-
-    // ★ 播放识别：id 形如 vid|集数，或带 flag
+    // 播放：id 含 | 或带 flag
     if (
         (!ac || ac === "play") &&
         playId &&
@@ -661,15 +641,20 @@ export async function onRequest(context) {
         ac = "play";
     }
 
-    // ★ 点分类误发 detail 的兼容（你已有的话保留）
+    // 分类误发成 detail
     if (ac === "detail" && tid && !ids) {
         ac = "category";
     }
 
+    // list 兼容
     if (ac === "list") {
-        ac = (!tid || tid === "all" || tid === "recommend") ? "home" : "category";
+        ac =
+            !tid || tid === "all" || tid === "recommend"
+                ? "home"
+                : "category";
     }
 
+    // 无 ac 时推断
     if (!ac) {
         if (wd) ac = "search";
         else if (ids) ac = "detail";
@@ -688,14 +673,16 @@ export async function onRequest(context) {
                 result = await categoryContent(tid || "all", pg, extend);
                 break;
             case "detail":
-                result = await detailContent((ids || playId).split(","));
+                result = await detailContent(
+                    String(ids || playId).split(",")
+                );
                 break;
             case "search":
                 result = await searchContent(wd, pg);
                 break;
             case "play":
-    result = await playerContent(playId || ids, url.origin);
-    break;
+                result = await playerContent(playId || ids, url.origin);
+                break;
             default:
                 result = await homeContent();
         }
@@ -709,7 +696,9 @@ export async function onRequest(context) {
     } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), {
             status: 500,
-            headers: { "Content-Type": "application/json;charset=utf-8" }
+            headers: {
+                "Content-Type": "application/json;charset=utf-8"
+            }
         });
     }
 }
