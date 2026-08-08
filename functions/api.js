@@ -3,11 +3,12 @@ const HOST = "https://eyeonneb.cc";
 const API = HOST + "/api";
 const PLATFORM_KEY = "7961beb44246e3012ce228d6b5ced05a";
 const VERSION = "2.0.0";
-const DEVICE_TYPE = "web"; // 必须 web，android/ios 会 2001
+const DEVICE_TYPE = "web"; // 必须 web，android/ios 会返回 2001
 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
+// ==================== 工具 ====================
 function uuidHex() {
   return crypto.randomUUID().replace(/-/g, "");
 }
@@ -42,6 +43,7 @@ async function hmacSha256(keyStr, dataBytes) {
 }
 
 async function aesCbcEncrypt(data, key, iv) {
+  // Web Crypto 自动 PKCS7，不要手动 pad
   const cryptoKey = await crypto.subtle.importKey(
     "raw",
     key,
@@ -83,6 +85,7 @@ async function gzipDecompress(data) {
   return new Uint8Array(await new Response(stream.readable).arrayBuffer());
 }
 
+// ==================== 请求源站 ====================
 async function callApi(path, data = {}, sessionId) {
   path = "/" + String(path).replace(/^\//, "");
   const rid = uuidWithDash();
@@ -150,11 +153,10 @@ async function callApi(path, data = {}, sessionId) {
   return JSON.parse(new TextDecoder().decode(plain));
 }
 
-/** 从接口结果中取出列表：支持 {data:{list:[]}} / {list:[]} / 数组 */
+// ==================== 数据转换 ====================
 function listData(data) {
   if (Array.isArray(data)) return data;
   if (!data || typeof data !== "object") return [];
-  // 业务失败
   if (data.status === "n") return [];
   if (Array.isArray(data.list)) return data.list;
   if (Array.isArray(data.items)) return data.items;
@@ -207,6 +209,7 @@ async function getClasses(sessionId) {
   return arr;
 }
 
+// ==================== 业务 ====================
 async function homeContent(base, sessionId) {
   const data = await callApi(
     "/drama/list",
@@ -224,10 +227,12 @@ async function homeContent(base, sessionId) {
 
 async function categoryContent(tid, pg, extend, base, sessionId) {
   let items = [];
+  const page = String(pg || "1");
+
   if (tid === "yuandou") {
     const data = await callApi(
       "/drama/navBlock",
-      { code: "yuandou", tab: "recommend", page: String(pg) },
+      { code: "yuandou", tab: "recommend", page },
       sessionId
     );
     const blocks = listData(data);
@@ -236,16 +241,19 @@ async function categoryContent(tid, pg, extend, base, sessionId) {
       else if (b && (b.id || b.drama_id)) items.push(b);
     }
   } else {
-    const req = { page: String(pg), page_size: "18" };
-    if (tid && tid !== "all" && tid !== "recommend") req.cat_id = tid;
-    if (extend?.order) req.order = extend.order;
-    if (extend?.update_status) req.update_status = extend.update_status;
+    const req = { page, page_size: "18" };
+    if (tid && tid !== "all" && tid !== "recommend") {
+      req.cat_id = tid;
+    }
+    if (extend && extend.order) req.order = extend.order;
+    if (extend && extend.update_status) req.update_status = extend.update_status;
     const data = await callApi("/drama/list", req, sessionId);
     items = listData(data);
   }
+
   return {
-    page: Number(pg),
-    pagecount: items.length < 18 ? Number(pg) : Number(pg) + 1,
+    page: Number(page),
+    pagecount: items.length < 18 ? Number(page) : Number(page) + 1,
     limit: 18,
     total: 99999,
     list: items.map((x) => toVod(x, base)),
@@ -298,7 +306,9 @@ async function detailContent(ids, base, sessionId) {
       play.push(`${ep.name || ep.title || `第${seq}集`}$${vod_id}|${seq}`);
     });
   } else {
-    for (let i = 1; i <= count; i++) play.push(`第${i}集$${vod_id}|${i}`);
+    for (let i = 1; i <= count; i++) {
+      play.push(`第${i}集$${vod_id}|${i}`);
+    }
   }
 
   return {
@@ -327,15 +337,16 @@ async function detailContent(ids, base, sessionId) {
 }
 
 async function searchContent(key, pg, base, sessionId) {
+  const page = String(pg || "1");
   const data = await callApi(
     "/drama/list",
-    { page: String(pg), page_size: "18", keywords: String(key) },
+    { page, page_size: "18", keywords: String(key || "") },
     sessionId
   );
   const items = listData(data);
   return {
-    page: Number(pg),
-    pagecount: items.length < 18 ? Number(pg) : Number(pg) + 1,
+    page: Number(page),
+    pagecount: items.length < 18 ? Number(page) : Number(page) + 1,
     limit: 18,
     total: 99999,
     list: items.map((x) => toVod(x, base)),
@@ -345,18 +356,18 @@ async function searchContent(key, pg, base, sessionId) {
 }
 
 async function playerContent(id, base, sessionId) {
-  const [vid, seq] = String(id).split("|");
-  const realVid = sid(vid);
-  const realSeq = seq || "1";
+  const parts = String(id || "").split("|");
+  const realVid = sid(parts[0]);
+  const realSeq = parts[1] || "1";
 
   let url = "";
   try {
     const obj = await callApi(
       "/drama/play",
-      { id: realVid, seq: realSeq },
+      { id: realVid, seq: String(realSeq) },
       sessionId
     );
-    const d = obj?.data || {};
+    const d = (obj && obj.data) || {};
     url = d.m3u8 || d.url || "";
   } catch (_) {}
 
@@ -365,29 +376,53 @@ async function playerContent(id, base, sessionId) {
   }
 
   const playUrl = proxyUrl(base, url);
-  const header = {
-    "User-Agent": UA,
-    Referer: HOST + "/home",
-    Origin: HOST,
-    Accept: "*/*",
-  };
 
   return {
     parse: 0,
     playUrl: "",
     url: playUrl,
     jx: 0,
-    header,
-    headers: header,
     format: "application/x-mpegURL",
   };
 }
 
+// ==================== 入口 ====================
 export async function onRequest(context) {
   const { request } = context;
   const url = new URL(request.url);
   const base = url.origin;
-  const ac = url.searchParams.get("ac") || "home";
+
+  let ac = url.searchParams.get("ac") || url.searchParams.get("action") || "";
+  const tid =
+    url.searchParams.get("tid") ||
+    url.searchParams.get("t") ||
+    url.searchParams.get("type") ||
+    url.searchParams.get("class") ||
+    "";
+  const pg =
+    url.searchParams.get("pg") ||
+    url.searchParams.get("page") ||
+    "1";
+  const wd =
+    url.searchParams.get("wd") ||
+    url.searchParams.get("key") ||
+    url.searchParams.get("keywords") ||
+    "";
+  const ids = url.searchParams.get("ids") || "";
+  const playId =
+    url.searchParams.get("play") ||
+    url.searchParams.get("id") ||
+    "";
+
+  // 无 ac 时根据参数推断
+  if (!ac) {
+    if (wd) ac = "search";
+    else if (ids) ac = "detail";
+    else if (tid || url.searchParams.has("filter")) ac = "category";
+    else ac = "home";
+  }
+  if (ac === "list") ac = "category";
+
   const sessionId = uuidHex();
 
   try {
@@ -397,44 +432,30 @@ export async function onRequest(context) {
         result = await homeContent(base, sessionId);
         break;
       case "category":
-  result = await categoryContent(
-    // OK影视 / TVBox 可能用 tid / t / type / class
-    url.searchParams.get("tid") ||
-      url.searchParams.get("t") ||
-      url.searchParams.get("type") ||
-      url.searchParams.get("class") ||
-      "all",
-    url.searchParams.get("pg") || url.searchParams.get("page") || "1",
-    {
-      order: url.searchParams.get("order"),
-      update_status: url.searchParams.get("update_status"),
-      sub: url.searchParams.get("sub"),
-    },
-    base,
-    sessionId
-  );
-  break;
+        result = await categoryContent(
+          tid || "all",
+          pg,
+          {
+            order: url.searchParams.get("order") || "",
+            update_status: url.searchParams.get("update_status") || "",
+            sub: url.searchParams.get("sub") || "",
+          },
+          base,
+          sessionId
+        );
+        break;
       case "detail":
         result = await detailContent(
-          (url.searchParams.get("ids") || "").split(","),
+          String(ids || playId).split(","),
           base,
           sessionId
         );
         break;
       case "search":
-        result = await searchContent(
-          url.searchParams.get("wd") || url.searchParams.get("key") || "",
-          url.searchParams.get("pg") || "1",
-          base,
-          sessionId
-        );
+        result = await searchContent(wd, pg, base, sessionId);
         break;
       case "play":
-        result = await playerContent(
-          url.searchParams.get("id") || "",
-          base,
-          sessionId
-        );
+        result = await playerContent(playId || ids, base, sessionId);
         break;
       default:
         result = { error: "unknown action", ac };
