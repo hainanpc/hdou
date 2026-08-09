@@ -491,14 +491,14 @@ async function detailContent(ids) {
     if (episodes.length > 0) {
         for (let i = 0; i < episodes.length; i++) {
             const ep = episodes[i];
-            const name = ep.name || ep.title || `第${i + 1}集`;
+            const name = ep.name || ep.title || `${i + 1}`;
             const seq = ep.seq || ep.episode || (i + 1);
-            play.push(`第${name}集$${vid}|${seq}`);
+            play.push(`${name}$${vid}|${seq}`);
         }
     } else {
         const count = Number(d.episode_count || d.total_episode || 1);
         for (let i = 1; i <= count; i++) {
-            play.push(`第${i}集$${vid}|${i}`);
+            play.push(`${i}$${vid}|${i}`);
         }
     }
 
