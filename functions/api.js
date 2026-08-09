@@ -493,7 +493,7 @@ async function detailContent(ids) {
             const ep = episodes[i];
             const name = ep.name || ep.title || `第${i + 1}集`;
             const seq = ep.seq || ep.episode || (i + 1);
-            play.push(`${name}$${vid}|${seq}`);
+            play.push(`第${name}集$${vid}|${seq}`);
         }
     } else {
         const count = Number(d.episode_count || d.total_episode || 1);
