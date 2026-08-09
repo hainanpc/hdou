@@ -318,7 +318,7 @@ function detailVod(item) {
         vod_remarks: item.update_label || "",
         vod_content: item.name || "",
         vod_play_from: "黄豆短剧",
-        vod_play_url: `第1集$${vid}|1`
+        vod_play_url: `1$${vid}|1`
     };
 }
 
