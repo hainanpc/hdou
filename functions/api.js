@@ -577,7 +577,7 @@ async function playerContent(id, base) {
     // 注意：变量名要统一，不要混用 playUrl / proxyUrl
     const origin = base || "";
     const finalUrl = origin
-        ? `${origin}/proxy?url=${encodeURIComponent(mediaUrl)}`
+        ? `$https://x.maflya.com/api/proxy?target=${encodeURIComponent(mediaUrl)}`
         : `/proxy?url=${encodeURIComponent(mediaUrl)}`;
 
     return {
